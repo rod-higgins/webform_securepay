@@ -2,6 +2,8 @@ services:
   webform_securepay.configuration:
     class: Drupal\webform_securepay\Service\ConfigurationService
     arguments: ['@config.factory']
+    tags:
+      - { name: service }
 
   webform_securepay.api:
     class: Drupal\webform_securepay\Service\SecurePayApiService
@@ -9,6 +11,8 @@ services:
       - '@http_client'
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
+    tags:
+      - { name: service }
 
   webform_securepay.payment:
     class: Drupal\webform_securepay\Service\PaymentService
@@ -17,7 +21,11 @@ services:
       - '@webform_securepay.configuration'
       - '@database'
       - '@logger.channel.webform_securepay'
+    tags:
+      - { name: service }
 
   logger.channel.webform_securepay:
     parent: logger.channel_base
     arguments: ['webform_securepay']
+    tags:
+      - { name: logger_channel }

@@ -1,8 +1,27 @@
 name: 'Webform SecurePay'
 type: module
-description: 'SecurePay payment integration for Drupal Webforms'
-core_version_requirement: ^10.4 || ^11
+description: 'Secure payment processing integration for Drupal Webforms using SecurePay OAuth 2.0 API. Enables PCI-compliant credit card payments with advanced security features.'
+core_version_requirement: ^10.1 || ^11
 package: Webform
+version: '1.0.0'
+
 dependencies:
-  - webform:webform
+  - webform:webform (>=6.1)
+  - drupal:system (>=10.1)
+
 configure: webform_securepay.admin_settings
+
+# Module information
+project: webform_securepay
+datestamp: 1640995200
+
+# PHP requirements
+php: '>=8.1'
+
+# Lifecycle information
+lifecycle: stable
+lifecycle_link: 'https://www.drupal.org/project/webform_securepay'
+
+# Testing information
+test_dependencies:
+  - drupal:test_helpers

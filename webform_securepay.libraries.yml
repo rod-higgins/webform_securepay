@@ -9,3 +9,17 @@ webform_securepay:
     - core/jquery
     - core/drupal
     - core/drupalSettings
+    - core/once
+
+webform_securepay_admin:
+  version: 1.x
+  css:
+    theme:
+      css/webform-securepay-admin.css: {}
+  js:
+    js/webform-securepay-admin.js: {}
+  dependencies:
+    - core/jquery
+    - core/drupal
+    - core/drupalSettings
+    - core/once

@@ -1,25 +1,85 @@
 webform_securepay.settings:
   type: config_object
-  label: 'SecurePay settings'
+  label: 'SecurePay payment processing settings'
   mapping:
     client_id:
       type: string
-      label: 'Client ID'
+      label: 'OAuth Client ID'
+      translatable: false
     client_secret:
       type: string
-      label: 'Client Secret'
+      label: 'OAuth Client Secret'
+      translatable: false
     merchant_code:
       type: string
       label: 'Merchant Code'
+      translatable: false
     environment:
       type: string
       label: 'Environment'
+      translatable: false
+      constraints:
+        Choice:
+          choices: ['sandbox', 'live']
+          message: 'Environment must be either sandbox or live'
     currency:
       type: string
       label: 'Default Currency'
+      translatable: false
+      constraints:
+        Choice:
+          choices: ['AUD', 'USD', 'EUR', 'GBP']
+          message: 'Currency must be a supported currency code'
     dcc_enabled:
       type: boolean
       label: 'Enable Dynamic Currency Conversion'
     three_ds_enabled:
       type: boolean
       label: 'Enable 3D Secure 2'
+    log_retention_days:
+      type: integer
+      label: 'Transaction log retention period (days)'
+      constraints:
+        Range:
+          min: 30
+          max: 2555
+          minMessage: 'Log retention must be at least 30 days'
+          maxMessage: 'Log retention cannot exceed 7 years (2555 days)'
+
+# Webform element configuration schema
+webform.webform_element.securepay:
+  type: webform_element
+  label: 'SecurePay payment element'
+  mapping:
+    amount:
+      type: string
+      label: 'Payment amount in cents'
+      translatable: false
+    currency:
+      type: string
+      label: 'Payment currency'
+      translatable: false
+      constraints:
+        Choice:
+          choices: ['AUD', 'USD', 'EUR', 'GBP']
+          message: 'Currency must be a supported currency code'
+    mode:
+      type: string
+      label: 'Payment mode'
+      translatable: false
+      constraints:
+        Choice:
+          choices: ['checkout', 'dcc']
+          message: 'Mode must be either checkout or dcc'
+
+# Block configuration schema (if blocks are used)
+block.settings.webform_securepay_status:
+  type: block_settings
+  label: 'SecurePay status block settings'
+  mapping:
+    show_environment:
+      type: boolean
+      label: 'Show current environment'
+    show_last_test:
+      type: boolean
+      label: 'Show last connection test result'

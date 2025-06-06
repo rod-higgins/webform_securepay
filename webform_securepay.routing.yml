@@ -5,6 +5,8 @@ webform_securepay.admin_settings:
     _title: 'SecurePay Settings'
   requirements:
     _permission: 'administer webform'
+  options:
+    _admin_route: TRUE
 
 webform_securepay.payment_callback:
   path: '/webform/securepay/callback'
@@ -13,6 +15,8 @@ webform_securepay.payment_callback:
   requirements:
     _access: 'TRUE'
   methods: [POST]
+  options:
+    no_cache: TRUE
 
 webform_securepay.webhook:
   path: '/webform/securepay/webhook'
@@ -21,3 +25,17 @@ webform_securepay.webhook:
   requirements:
     _access: 'TRUE'
   methods: [POST]
+  options:
+    no_cache: TRUE
+
+webform_securepay.test_connection:
+  path: '/admin/config/webform/securepay/test'
+  defaults:
+    _controller: '\Drupal\webform_securepay\Controller\PaymentController::testConnection'
+    _title: 'Test SecurePay Connection'
+  requirements:
+    _permission: 'administer webform'
+  methods: [GET, POST]
+  options:
+    _admin_route: TRUE
+    no_cache: TRUE

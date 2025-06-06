@@ -7,6 +7,29 @@ namespace Drupal\webform_securepay\Exception;
  */
 class ApiException extends PaymentException {
 
+  // API error codes
+  public const AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED';
+  public const HTTP_ERROR = 'HTTP_ERROR';
+  public const RATE_LIMITED = 'RATE_LIMITED';
+  public const SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE';
+  public const INVALID_RESPONSE = 'INVALID_RESPONSE';
+  public const MISSING_REQUIRED_DATA = 'MISSING_REQUIRED_DATA';
+  public const UNSUPPORTED_OPERATION = 'UNSUPPORTED_OPERATION';
+  public const QUOTA_EXCEEDED = 'QUOTA_EXCEEDED';
+  public const MAINTENANCE_MODE = 'MAINTENANCE_MODE';
+  public const CONNECTION_TIMEOUT = 'CONNECTION_TIMEOUT';
+  public const SSL_ERROR = 'SSL_ERROR';
+  public const DNS_ERROR = 'DNS_ERROR';
+  public const MALFORMED_JSON = 'MALFORMED_JSON';
+  public const WEBHOOK_VALIDATION_FAILED = 'WEBHOOK_VALIDATION_FAILED';
+  public const ORDER_NOT_FOUND = 'ORDER_NOT_FOUND';
+  public const DUPLICATE_ORDER = 'DUPLICATE_ORDER';
+  public const INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS';
+  public const CARD_DECLINED = 'CARD_DECLINED';
+  public const FRAUD_DETECTED = 'FRAUD_DETECTED';
+  public const EXPIRED_CARD = 'EXPIRED_CARD';
+  public const INVALID_CARD = 'INVALID_CARD';
+
   /**
    * Creates an API exception for authentication failures.
    */
@@ -15,7 +38,8 @@ class ApiException extends PaymentException {
       "SecurePay API authentication failed: {$reason}",
       401,
       null,
-      'AUTHENTICATION_FAILED'
+      self::AUTHENTICATION_FAILED,
+      ['reason' => $reason]
     );
   }
 
@@ -27,32 +51,34 @@ class ApiException extends PaymentException {
       "SecurePay API HTTP error ({$statusCode}): {$message}",
       $statusCode,
       null,
-      'HTTP_ERROR',
-      ['status_code' => $statusCode]
+      self::HTTP_ERROR,
+      ['status_code' => $statusCode, 'message' => $message]
     );
   }
 
   /**
    * Creates an API exception for rate limiting.
    */
-  public static function apiRateLimited(): self {
+  public static function apiRateLimited(int $retryAfter = 60): self {
     return new self(
       'SecurePay API rate limit exceeded. Please try again later.',
       429,
       null,
-      'RATE_LIMITED'
+      self::RATE_LIMITED,
+      ['retry_after' => $retryAfter]
     );
   }
 
   /**
    * Creates an API exception for service unavailability.
    */
-  public static function serviceUnavailable(): self {
+  public static function serviceUnavailable(string $reason = 'Service temporarily unavailable'): self {
     return new self(
-      'SecurePay API is temporarily unavailable. Please try again later.',
+      "SecurePay API is temporarily unavailable: {$reason}",
       503,
       null,
-      'SERVICE_UNAVAILABLE'
+      self::SERVICE_UNAVAILABLE,
+      ['reason' => $reason]
     );
   }
 
@@ -64,7 +90,8 @@ class ApiException extends PaymentException {
       "Invalid response from SecurePay API: {$reason}",
       0,
       null,
-      'INVALID_RESPONSE'
+      self::INVALID_RESPONSE,
+      ['reason' => $reason]
     );
   }
 
@@ -76,7 +103,7 @@ class ApiException extends PaymentException {
       "Required field '{$field}' missing in API response",
       0,
       null,
-      'MISSING_REQUIRED_DATA',
+      self::MISSING_REQUIRED_DATA,
       ['field' => $field]
     );
   }
@@ -84,38 +111,49 @@ class ApiException extends PaymentException {
   /**
    * Creates an API exception for unsupported operations.
    */
-  public static function unsupportedOperation(string $operation): self {
+  public static function unsupportedOperation(string $operation, string $apiVersion = 'current'): self {
     return new self(
-      "Operation '{$operation}' is not supported by the current SecurePay API version",
+      "Operation '{$operation}' is not supported by the {$apiVersion} SecurePay API version",
       0,
       null,
-      'UNSUPPORTED_OPERATION',
-      ['operation' => $operation]
+      self::UNSUPPORTED_OPERATION,
+      ['operation' => $operation, 'api_version' => $apiVersion]
     );
   }
 
   /**
    * Creates an API exception for quota exceeded.
    */
-  public static function quotaExceeded(string $quotaType): self {
+  public static function quotaExceeded(string $quotaType, int $limit = 0): self {
+    $message = "SecurePay API quota exceeded for {$quotaType}";
+    if ($limit > 0) {
+      $message .= " (limit: {$limit})";
+    }
+    
     return new self(
-      "SecurePay API quota exceeded for {$quotaType}",
+      $message,
       429,
       null,
-      'QUOTA_EXCEEDED',
-      ['quota_type' => $quotaType]
+      self::QUOTA_EXCEEDED,
+      ['quota_type' => $quotaType, 'limit' => $limit]
     );
   }
 
   /**
    * Creates an API exception for maintenance mode.
    */
-  public static function maintenanceMode(): self {
+  public static function maintenanceMode(string $estimatedDuration = ''): self {
+    $message = 'SecurePay API is in maintenance mode. Please try again later.';
+    if (!empty($estimatedDuration)) {
+      $message .= " Estimated duration: {$estimatedDuration}";
+    }
+    
     return new self(
-      'SecurePay API is in maintenance mode. Please try again later.',
+      $message,
       503,
       null,
-      'MAINTENANCE_MODE'
+      self::MAINTENANCE_MODE,
+      ['estimated_duration' => $estimatedDuration]
     );
   }
 
@@ -127,7 +165,7 @@ class ApiException extends PaymentException {
       "Connection to SecurePay API timed out after {$timeout} seconds",
       0,
       null,
-      'CONNECTION_TIMEOUT',
+      self::CONNECTION_TIMEOUT,
       ['timeout' => $timeout]
     );
   }
@@ -140,19 +178,21 @@ class ApiException extends PaymentException {
       "SSL/TLS error connecting to SecurePay API: {$details}",
       0,
       null,
-      'SSL_ERROR'
+      self::SSL_ERROR,
+      ['details' => $details]
     );
   }
 
   /**
    * Creates an API exception for DNS resolution failures.
    */
-  public static function dnsError(): self {
+  public static function dnsError(string $hostname = 'SecurePay API'): self {
     return new self(
-      'Unable to resolve SecurePay API hostname. Please check your network connection.',
+      "Unable to resolve {$hostname} hostname. Please check your network connection.",
       0,
       null,
-      'DNS_ERROR'
+      self::DNS_ERROR,
+      ['hostname' => $hostname]
     );
   }
 
@@ -164,7 +204,7 @@ class ApiException extends PaymentException {
       "Malformed JSON response from SecurePay API: {$jsonError}",
       0,
       null,
-      'MALFORMED_JSON',
+      self::MALFORMED_JSON,
       ['json_error' => $jsonError]
     );
   }
@@ -177,7 +217,8 @@ class ApiException extends PaymentException {
       "Webhook validation failed: {$reason}",
       401,
       null,
-      'WEBHOOK_VALIDATION_FAILED'
+      self::WEBHOOK_VALIDATION_FAILED,
+      ['reason' => $reason]
     );
   }
 
@@ -189,7 +230,7 @@ class ApiException extends PaymentException {
       "Order '{$orderId}' not found in SecurePay API",
       404,
       null,
-      'ORDER_NOT_FOUND',
+      self::ORDER_NOT_FOUND,
       ['order_id' => $orderId]
     );
   }
@@ -202,8 +243,167 @@ class ApiException extends PaymentException {
       "Order '{$orderId}' already exists in SecurePay API",
       409,
       null,
-      'DUPLICATE_ORDER',
+      self::DUPLICATE_ORDER,
       ['order_id' => $orderId]
     );
+  }
+
+  /**
+   * Creates an API exception for insufficient funds.
+   */
+  public static function insufficientFunds(string $orderId): self {
+    return new self(
+      "Insufficient funds for order '{$orderId}'",
+      402,
+      null,
+      self::INSUFFICIENT_FUNDS,
+      ['order_id' => $orderId]
+    );
+  }
+
+  /**
+   * Creates an API exception for card declined.
+   */
+  public static function cardDeclined(string $reason = 'Card declined'): self {
+    return new self(
+      "Card payment declined: {$reason}",
+      402,
+      null,
+      self::CARD_DECLINED,
+      ['reason' => $reason]
+    );
+  }
+
+  /**
+   * Creates an API exception for fraud detection.
+   */
+  public static function fraudDetected(string $orderId, string $reason = 'Suspicious activity detected'): self {
+    return new self(
+      "Fraud detected for order '{$orderId}': {$reason}",
+      403,
+      null,
+      self::FRAUD_DETECTED,
+      ['order_id' => $orderId, 'reason' => $reason]
+    );
+  }
+
+  /**
+   * Creates an API exception for expired card.
+   */
+  public static function expiredCard(): self {
+    return new self(
+      'Payment failed: Card has expired',
+      402,
+      null,
+      self::EXPIRED_CARD
+    );
+  }
+
+  /**
+   * Creates an API exception for invalid card.
+   */
+  public static function invalidCard(string $reason = 'Invalid card details'): self {
+    return new self(
+      "Payment failed: {$reason}",
+      402,
+      null,
+      self::INVALID_CARD,
+      ['reason' => $reason]
+    );
+  }
+
+  /**
+   * Creates an API exception from HTTP response.
+   */
+  public static function fromHttpResponse(int $statusCode, string $responseBody = '', array $headers = []): self {
+    $message = "HTTP {$statusCode}";
+    $errorCode = self::HTTP_ERROR;
+    $context = ['status_code' => $statusCode, 'headers' => $headers];
+
+    // Try to parse error response
+    if (!empty($responseBody)) {
+      $decoded = json_decode($responseBody, true);
+      if (json_last_error() === JSON_ERROR_NONE && isset($decoded['error'])) {
+        $message = $decoded['error'];
+        $context['response_body'] = $decoded;
+      } else {
+        $context['response_body'] = $responseBody;
+      }
+    }
+
+    // Map specific status codes to error codes
+    switch ($statusCode) {
+      case 401:
+        $errorCode = self::AUTHENTICATION_FAILED;
+        break;
+      case 402:
+        $errorCode = self::CARD_DECLINED;
+        break;
+      case 403:
+        $errorCode = self::FRAUD_DETECTED;
+        break;
+      case 404:
+        $errorCode = self::ORDER_NOT_FOUND;
+        break;
+      case 409:
+        $errorCode = self::DUPLICATE_ORDER;
+        break;
+      case 429:
+        $errorCode = self::RATE_LIMITED;
+        break;
+      case 503:
+        $errorCode = self::SERVICE_UNAVAILABLE;
+        break;
+    }
+
+    return new self($message, $statusCode, null, $errorCode, $context);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getUserMessage(): string {
+    // Provide user-friendly messages for common API errors
+    return match ($this->getErrorCode()) {
+      self::AUTHENTICATION_FAILED => 'Payment service authentication error. Please contact support.',
+      self::RATE_LIMITED => 'Too many payment requests. Please wait a moment and try again.',
+      self::SERVICE_UNAVAILABLE, self::MAINTENANCE_MODE => 'Payment service temporarily unavailable. Please try again later.',
+      self::CONNECTION_TIMEOUT => 'Payment request timed out. Please try again.',
+      self::INSUFFICIENT_FUNDS => 'Payment declined: Insufficient funds.',
+      self::CARD_DECLINED => 'Payment declined. Please check your card details or try a different card.',
+      self::FRAUD_DETECTED => 'Payment blocked for security reasons. Please contact your bank.',
+      self::EXPIRED_CARD => 'Payment declined: Card has expired.',
+      self::INVALID_CARD => 'Payment declined: Invalid card details.',
+      self::ORDER_NOT_FOUND => 'Payment order not found. Please try again.',
+      self::DUPLICATE_ORDER => 'This payment has already been processed.',
+      default => 'Payment service error. Please try again later.',
+    };
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function isRetryable(): bool {
+    return in_array($this->getErrorCode(), [
+      self::RATE_LIMITED,
+      self::SERVICE_UNAVAILABLE,
+      self::CONNECTION_TIMEOUT,
+      self::DNS_ERROR,
+      self::HTTP_ERROR, // Some HTTP errors might be retryable
+    ], true);
+  }
+
+  /**
+   * Get retry delay in seconds.
+   */
+  public function getRetryDelay(): int {
+    $context = $this->getContext();
+    
+    return match ($this->getErrorCode()) {
+      self::RATE_LIMITED => $context['retry_after'] ?? 60,
+      self::SERVICE_UNAVAILABLE => 30,
+      self::CONNECTION_TIMEOUT => 5,
+      default => 10,
+    };
   }
 }

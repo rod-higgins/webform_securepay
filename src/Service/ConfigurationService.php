@@ -10,6 +10,23 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 class ConfigurationService {
 
   public const CONFIG_NAME = 'webform_securepay.settings';
+  
+  // Environment constants
+  public const ENVIRONMENT_SANDBOX = 'sandbox';
+  public const ENVIRONMENT_LIVE = 'live';
+  
+  // Currency constants
+  public const CURRENCY_AUD = 'AUD';
+  public const CURRENCY_USD = 'USD';
+  public const CURRENCY_EUR = 'EUR';
+  public const CURRENCY_GBP = 'GBP';
+  
+  // API endpoints
+  private const SANDBOX_BASE_URL = 'https://api.payments.test.auspost.com.au';
+  private const LIVE_BASE_URL = 'https://api.payments.auspost.com.au';
+  
+  // Required configuration fields
+  private const REQUIRED_FIELDS = ['client_id', 'client_secret', 'merchant_code'];
 
   public function __construct(
     private readonly ConfigFactoryInterface $configFactory,
@@ -35,9 +52,7 @@ class ConfigurationService {
    * Check if SecurePay is configured.
    */
   public function isConfigured(): bool {
-    $required = ['client_id', 'client_secret', 'merchant_code'];
-    
-    foreach ($required as $field) {
+    foreach (self::REQUIRED_FIELDS as $field) {
       $value = $this->get($field);
       if (empty($value) || !is_string($value) || trim($value) === '') {
         return false;
@@ -51,10 +66,8 @@ class ConfigurationService {
    * Get API endpoints based on environment.
    */
   public function getApiEndpoints(): array {
-    $isLive = $this->get('environment') === 'live';
-    $baseUrl = $isLive 
-      ? 'https://api.payments.auspost.com.au'
-      : 'https://api.payments.test.auspost.com.au';
+    $isLive = $this->get('environment') === self::ENVIRONMENT_LIVE;
+    $baseUrl = $isLive ? self::LIVE_BASE_URL : self::SANDBOX_BASE_URL;
 
     return [
       'auth' => $baseUrl . '/oauth/token',
@@ -68,8 +81,8 @@ class ConfigurationService {
    */
   public static function getEnvironmentOptions(): array {
     return [
-      'sandbox' => t('Sandbox (Testing)'),
-      'live' => t('Live (Production)'),
+      self::ENVIRONMENT_SANDBOX => t('Sandbox (Testing)'),
+      self::ENVIRONMENT_LIVE => t('Live (Production)'),
     ];
   }
 
@@ -78,10 +91,38 @@ class ConfigurationService {
    */
   public static function getCurrencyOptions(): array {
     return [
-      'AUD' => t('Australian Dollar'),
-      'USD' => t('US Dollar'),
-      'EUR' => t('Euro'),
-      'GBP' => t('British Pound'),
+      self::CURRENCY_AUD => t('Australian Dollar'),
+      self::CURRENCY_USD => t('US Dollar'),
+      self::CURRENCY_EUR => t('Euro'),
+      self::CURRENCY_GBP => t('British Pound'),
     ];
+  }
+
+  /**
+   * Get valid environments.
+   */
+  public static function getValidEnvironments(): array {
+    return [self::ENVIRONMENT_SANDBOX, self::ENVIRONMENT_LIVE];
+  }
+
+  /**
+   * Get valid currencies.
+   */
+  public static function getValidCurrencies(): array {
+    return [self::CURRENCY_AUD, self::CURRENCY_USD, self::CURRENCY_EUR, self::CURRENCY_GBP];
+  }
+
+  /**
+   * Validate environment setting.
+   */
+  public function isValidEnvironment(string $environment): bool {
+    return in_array($environment, self::getValidEnvironments(), true);
+  }
+
+  /**
+   * Validate currency setting.
+   */
+  public function isValidCurrency(string $currency): bool {
+    return in_array($currency, self::getValidCurrencies(), true);
   }
 }

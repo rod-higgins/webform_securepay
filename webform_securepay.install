@@ -6,20 +6,22 @@
  */
 
 use Drupal\Core\Url;
+use Drupal\webform_securepay\Service\ConfigurationService;
 
 /**
  * Implements hook_install().
  */
-function webform_securepay_install() {
-  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
+function webform_securepay_install(): void {
+  $config = \Drupal::configFactory()->getEditable(ConfigurationService::CONFIG_NAME);
   
-  $config->set('environment', 'sandbox')
-         ->set('currency', 'AUD')
+  // Set default configuration values
+  $config->set('environment', ConfigurationService::ENVIRONMENT_SANDBOX)
+         ->set('currency', ConfigurationService::CURRENCY_AUD)
          ->set('dcc_enabled', FALSE)
          ->set('three_ds_enabled', FALSE)
          ->save();
 
-  \Drupal::messenger()->addMessage(t('SecurePay module installed. <a href="@url">Configure settings</a>.', [
+  \Drupal::messenger()->addMessage(t('SecurePay module installed successfully. <a href="@url">Configure settings</a> to start accepting payments.', [
     '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
   ]));
 }
@@ -27,76 +29,81 @@ function webform_securepay_install() {
 /**
  * Implements hook_uninstall().
  */
-function webform_securepay_uninstall() {
+function webform_securepay_uninstall(): void {
   // Remove configuration
-  \Drupal::configFactory()->getEditable('webform_securepay.settings')->delete();
+  \Drupal::configFactory()->getEditable(ConfigurationService::CONFIG_NAME)->delete();
   
   // Clean up any remaining state
-  \Drupal::state()->delete('webform_securepay.last_connection_test');
+  $state = \Drupal::state();
+  $state->delete('webform_securepay.last_connection_test');
+  $state->delete('webform_securepay.api_cache');
+  
+  // Clear caches
+  drupal_flush_all_caches();
 }
 
 /**
  * Implements hook_schema().
  */
-function webform_securepay_schema() {
+function webform_securepay_schema(): array {
   $schema['webform_securepay_transactions'] = [
-    'description' => 'SecurePay transaction logs',
+    'description' => 'SecurePay transaction logs for audit and reconciliation',
     'fields' => [
       'id' => [
         'type' => 'serial',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Primary key: transaction log ID.',
+        'description' => 'Primary key: unique transaction log ID.',
       ],
       'order_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => TRUE,
-        'description' => 'Unique order identifier.',
+        'description' => 'Unique order identifier from payment request.',
       ],
       'transaction_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => FALSE,
-        'description' => 'SecurePay transaction ID.',
+        'description' => 'SecurePay transaction ID from successful payments.',
       ],
       'amount' => [
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Payment amount in cents.',
+        'description' => 'Payment amount in cents (e.g., 1000 = $10.00).',
       ],
       'currency' => [
         'type' => 'varchar',
         'length' => 3,
         'not null' => TRUE,
         'default' => 'AUD',
-        'description' => 'Currency code (ISO 4217).',
+        'description' => 'Currency code (ISO 4217 format).',
       ],
       'status' => [
         'type' => 'varchar',
         'length' => 32,
         'not null' => TRUE,
-        'description' => 'Transaction status.',
+        'description' => 'Transaction status (success, failed, pending, etc.).',
       ],
       'ip_address' => [
         'type' => 'varchar',
         'length' => 45,
         'not null' => FALSE,
-        'description' => 'Client IP address (IPv4 or IPv6).',
+        'description' => 'Client IP address (supports both IPv4 and IPv6).',
       ],
       'created' => [
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Timestamp when transaction was created.',
+        'description' => 'Unix timestamp when transaction was created.',
       ],
       'response_data' => [
         'type' => 'text',
         'not null' => FALSE,
         'size' => 'big',
-        'description' => 'Raw API response data (JSON).',
+        'description' => 'Raw API response data (JSON) for debugging and reconciliation.',
       ],
     ],
     'primary key' => ['id'],
@@ -109,6 +116,8 @@ function webform_securepay_schema() {
       'created' => ['created'],
       'currency' => ['currency'],
       'ip_status' => ['ip_address', 'status'],
+      'amount_currency' => ['amount', 'currency'],
+      'created_status' => ['created', 'status'],
     ],
   ];
 
@@ -118,11 +127,11 @@ function webform_securepay_schema() {
 /**
  * Implements hook_requirements().
  */
-function webform_securepay_requirements($phase) {
+function webform_securepay_requirements($phase): array {
   $requirements = [];
 
   if ($phase === 'runtime') {
-    $config = \Drupal::config('webform_securepay.settings');
+    $config = \Drupal::config(ConfigurationService::CONFIG_NAME);
     $configService = \Drupal::service('webform_securepay.configuration');
     
     // Check basic configuration
@@ -131,37 +140,67 @@ function webform_securepay_requirements($phase) {
         'title' => t('SecurePay Configuration'),
         'value' => t('Not configured'),
         'severity' => REQUIREMENT_WARNING,
-        'description' => t('SecurePay is not fully configured. <a href="@url">Configure settings</a>.', [
+        'description' => t('SecurePay is not fully configured. <a href="@url">Configure settings</a> to enable payment processing.', [
           '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
         ]),
       ];
     } else {
+      $environment = $config->get('environment');
       $requirements['webform_securepay_config'] = [
         'title' => t('SecurePay Configuration'),
         'value' => t('Configured (@env)', [
-          '@env' => $config->get('environment') === 'live' ? 'Live' : 'Sandbox',
+          '@env' => $environment === ConfigurationService::ENVIRONMENT_LIVE ? 'Live' : 'Sandbox',
         ]),
         'severity' => REQUIREMENT_OK,
+        'description' => t('SecurePay is properly configured and ready to process payments.'),
       ];
     }
 
     // Check HTTPS for live environment
-    if ($config->get('environment') === 'live') {
+    if ($config->get('environment') === ConfigurationService::ENVIRONMENT_LIVE) {
       $request = \Drupal::request();
       if (!$request->isSecure()) {
         $requirements['webform_securepay_ssl'] = [
-          'title' => t('SecurePay SSL'),
+          'title' => t('SecurePay SSL/HTTPS'),
           'value' => t('HTTPS required'),
           'severity' => REQUIREMENT_ERROR,
-          'description' => t('HTTPS is required when using SecurePay in live environment.'),
+          'description' => t('HTTPS is required when using SecurePay in live environment. Please enable SSL/HTTPS for this site.'),
         ];
       } else {
         $requirements['webform_securepay_ssl'] = [
-          'title' => t('SecurePay SSL'),
+          'title' => t('SecurePay SSL/HTTPS'),
           'value' => t('HTTPS enabled'),
           'severity' => REQUIREMENT_OK,
+          'description' => t('SSL/HTTPS is properly configured for live environment.'),
         ];
       }
+    }
+
+    // Check PHP extensions
+    $requiredExtensions = ['json', 'curl', 'openssl'];
+    $missingExtensions = [];
+    
+    foreach ($requiredExtensions as $extension) {
+      if (!extension_loaded($extension)) {
+        $missingExtensions[] = $extension;
+      }
+    }
+    
+    if (!empty($missingExtensions)) {
+      $requirements['webform_securepay_extensions'] = [
+        'title' => t('SecurePay PHP Extensions'),
+        'value' => t('Missing extensions'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => t('Required PHP extensions are missing: @extensions. Please install these extensions.', [
+          '@extensions' => implode(', ', $missingExtensions),
+        ]),
+      ];
+    } else {
+      $requirements['webform_securepay_extensions'] = [
+        'title' => t('SecurePay PHP Extensions'),
+        'value' => t('All required extensions available'),
+        'severity' => REQUIREMENT_OK,
+      ];
     }
 
     // Check database table
@@ -171,60 +210,82 @@ function webform_securepay_requirements($phase) {
         'title' => t('SecurePay Database'),
         'value' => t('Table missing'),
         'severity' => REQUIREMENT_ERROR,
-        'description' => t('The webform_securepay_transactions table is missing. Try reinstalling the module.'),
+        'description' => t('The webform_securepay_transactions table is missing. Try reinstalling the module or run database updates.'),
       ];
+    } else {
+      // Check table structure
+      $schema = drupal_get_module_schema('webform_securepay', 'webform_securepay_transactions');
+      $tableSchema = $database->schema();
+      $missingIndexes = [];
+      
+      if (isset($schema['indexes'])) {
+        foreach ($schema['indexes'] as $indexName => $indexFields) {
+          if (!$tableSchema->indexExists('webform_securepay_transactions', $indexName)) {
+            $missingIndexes[] = $indexName;
+          }
+        }
+      }
+      
+      if (!empty($missingIndexes)) {
+        $requirements['webform_securepay_table'] = [
+          'title' => t('SecurePay Database'),
+          'value' => t('Missing indexes'),
+          'severity' => REQUIREMENT_WARNING,
+          'description' => t('Database table exists but some indexes are missing: @indexes. Run database updates to improve performance.', [
+            '@indexes' => implode(', ', $missingIndexes),
+          ]),
+        ];
+      } else {
+        $requirements['webform_securepay_table'] = [
+          'title' => t('SecurePay Database'),
+          'value' => t('Table configured correctly'),
+          'severity' => REQUIREMENT_OK,
+        ];
+      }
+    }
+
+    // Check connection to SecurePay (if configured)
+    if ($configService->isConfigured()) {
+      $lastTest = \Drupal::state()->get('webform_securepay.last_connection_test');
+      
+      if ($lastTest && isset($lastTest['timestamp'])) {
+        $testAge = time() - $lastTest['timestamp'];
+        $testAgeHours = round($testAge / 3600, 1);
+        
+        if ($lastTest['success']) {
+          $severity = $testAge > 86400 ? REQUIREMENT_WARNING : REQUIREMENT_OK; // 24 hours
+          $requirements['webform_securepay_connection'] = [
+            'title' => t('SecurePay Connection'),
+            'value' => t('Last test: @age hours ago (Success)', ['@age' => $testAgeHours]),
+            'severity' => $severity,
+            'description' => $severity === REQUIREMENT_WARNING 
+              ? t('Connection test is old. <a href="@url">Test connection</a> to verify current status.', [
+                  '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
+                ])
+              : t('Connection to SecurePay is working properly.'),
+          ];
+        } else {
+          $requirements['webform_securepay_connection'] = [
+            'title' => t('SecurePay Connection'),
+            'value' => t('Last test: @age hours ago (Failed)', ['@age' => $testAgeHours]),
+            'severity' => REQUIREMENT_ERROR,
+            'description' => t('Connection to SecurePay failed. <a href="@url">Check configuration and test connection</a>.', [
+              '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
+            ]),
+          ];
+        }
+      } else {
+        $requirements['webform_securepay_connection'] = [
+          'title' => t('SecurePay Connection'),
+          'value' => t('Not tested'),
+          'severity' => REQUIREMENT_WARNING,
+          'description' => t('Connection to SecurePay has not been tested. <a href="@url">Test connection</a> to verify configuration.', [
+            '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
+          ]),
+        ];
+      }
     }
   }
 
   return $requirements;
-}
-
-/**
- * Implements hook_update_N().
- * 
- * Update transaction table schema if needed.
- */
-function webform_securepay_update_8001() {
-  $database = \Drupal::database();
-  $schema = $database->schema();
-  
-  // Add indexes if they don't exist
-  $table = 'webform_securepay_transactions';
-  
-  if ($schema->tableExists($table)) {
-    if (!$schema->indexExists($table, 'transaction_id')) {
-      $schema->addIndex($table, 'transaction_id', ['transaction_id'], [
-        'fields' => [
-          'transaction_id' => [
-            'type' => 'varchar',
-            'length' => 255,
-            'not null' => FALSE,
-          ],
-        ],
-      ]);
-    }
-    
-    if (!$schema->indexExists($table, 'currency')) {
-      $schema->addIndex($table, 'currency', ['currency'], [
-        'fields' => [
-          'currency' => [
-            'type' => 'varchar',
-            'length' => 3,
-            'not null' => TRUE,
-            'default' => 'AUD',
-          ],
-        ],
-      ]);
-    }
-
-    // Add unique constraint for order_id if it doesn't exist
-    if (!$schema->indexExists($table, 'order_id')) {
-      $schema->addUniqueKey($table, 'order_id', ['order_id']);
-    }
-
-    // Add composite index for IP and status
-    if (!$schema->indexExists($table, 'ip_status')) {
-      $schema->addIndex($table, 'ip_status', ['ip_address', 'status']);
-    }
-  }
 }

@@ -1,45 +1,121 @@
 {#
 /**
  * @file
- * SecurePay webform element template.
+ * Template for SecurePay webform element.
  *
  * Variables:
  * - element: The element array containing configuration.
  * - value: The element value.
+ * - attributes: HTML attributes for the element wrapper.
+ * - title_attributes: HTML attributes for the title element.
+ * - description_attributes: HTML attributes for the description element.
  */
 #}
 
-<div{{ attributes.addClass('webform-securepay-element') }}>
+{%- set classes = [
+  'webform-securepay-element',
+  'js-webform-securepay',
+  element['#webform_key'] ? 'webform-securepay--' ~ element['#webform_key']|clean_class,
+] -%}
+
+<div{{ attributes.addClass(classes) }}>
   
+  {# Element title #}
   {% if element['#title'] %}
-    <h3>{{ element['#title'] }}</h3>
+    <h3{{ title_attributes.addClass('webform-securepay-element__title') }}>
+      {{ element['#title'] }}
+    </h3>
   {% endif %}
   
+  {# Element description #}
   {% if element['#description'] %}
-    <div class="description">{{ element['#description'] }}</div>
+    <div{{ description_attributes.addClass('webform-securepay-element__description') }}>
+      {{ element['#description'] }}
+    </div>
   {% endif %}
   
   {# Payment amount display #}
   {% if element['#amount'] %}
-    <div class="payment-amount">
-      {{ 'Amount:'|t }} {{ element['#currency']|default('AUD') }} {{ (element['#amount'] / 100)|number_format(2) }}
+    {% set currency_symbol = element['#currency'] == 'USD' ? '$' : (element['#currency'] == 'EUR' ? '€' : (element['#currency'] == 'GBP' ? '£' : '$')) %}
+    <div class="webform-securepay-element__amount">
+      <span class="webform-securepay-element__amount-label">{{ 'Payment Amount:'|t }}</span>
+      <span class="webform-securepay-element__amount-value">
+        {{ currency_symbol }}{{ (element['#amount'] / 100)|number_format(2) }}
+        <span class="webform-securepay-element__currency">{{ element['#currency']|default('AUD') }}</span>
+      </span>
     </div>
   {% endif %}
   
-  {# SecurePay UI container #}
-  <div id="securepay-container-{{ element['#element_id'] }}" class="securepay-container"></div>
+  {# Security notice #}
+  <div class="webform-securepay-element__security-notice">
+    <svg class="webform-securepay-element__security-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M8 1l3 2v3.5c0 2.5-1.5 4.5-3 5-1.5-.5-3-2.5-3-5V3l3-2z"/>
+    </svg>
+    <span>{{ 'Secure payment processing'|t }}</span>
+  </div>
   
-  {# Payment button #}
-  <button type="button" class="btn btn-primary securepay-pay-button" data-container="securepay-container-{{ element['#element_id'] }}">
-    {{ 'Pay Now'|t }}
-  </button>
+  {# SecurePay UI container #}
+  <div id="securepay-container-{{ element['#element_id'] }}" 
+       class="webform-securepay-element__container securepay-container"
+       data-securepay-element="{{ element['#element_id'] }}"
+       data-amount="{{ element['#amount'] }}"
+       data-currency="{{ element['#currency']|default('AUD') }}"
+       data-mode="{{ element['#mode']|default('checkout') }}">
+    
+    {# Fallback content for when JavaScript is disabled #}
+    <noscript>
+      <div class="webform-securepay-element__noscript">
+        <p>{{ 'JavaScript is required for secure payment processing. Please enable JavaScript and refresh the page.'|t }}</p>
+      </div>
+    </noscript>
+  </div>
+  
+  {# Payment action buttons #}
+  <div class="webform-securepay-element__actions">
+    <button type="button" 
+            class="webform-securepay-element__pay-button securepay-pay-button btn btn-primary"
+            data-container="securepay-container-{{ element['#element_id'] }}"
+            disabled>
+      <svg class="webform-securepay-element__button-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M2 4h12v8H2V4zm1 1v6h10V5H3zm2 2h6v2H5V7z"/>
+      </svg>
+      <span class="webform-securepay-element__button-text">{{ 'Pay Now'|t }}</span>
+    </button>
+  </div>
   
   {# Loading indicator #}
-  <div class="loading-indicator" style="display: none;">
-    <span>{{ 'Processing payment...'|t }}</span>
+  <div class="webform-securepay-element__loading loading-indicator" style="display: none;" aria-live="polite">
+    <div class="webform-securepay-element__spinner">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+        <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+        <path d="M10 2a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 10 10" to="360 10 10" dur="1s" repeatCount="indefinite"/>
+        </path>
+      </svg>
+    </div>
+    <span class="webform-securepay-element__loading-text">{{ 'Processing payment...'|t }}</span>
   </div>
   
   {# Result display #}
-  <div class="payment-result" style="display: none;"></div>
+  <div class="webform-securepay-element__result payment-result" style="display: none;" aria-live="polite">
+    {# Result content will be populated by JavaScript #}
+  </div>
   
+  {# Hidden input for form submission #}
+  <input type="hidden" 
+         name="{{ element['#name'] }}" 
+         class="webform-securepay-element__input"
+         value="{{ value|default('') }}" />
+  
+  {# Additional metadata for JavaScript #}
+  <script type="application/json" class="webform-securepay-element__config">
+    {{- {
+      elementId: element['#element_id'],
+      webformKey: element['#webform_key'],
+      amount: element['#amount'],
+      currency: element['#currency']|default('AUD'),
+      mode: element['#mode']|default('checkout'),
+      required: element['#required']|default(false)
+    }|json_encode|raw -}}
+  </script>
 </div>

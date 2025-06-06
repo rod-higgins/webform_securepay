@@ -6,37 +6,311 @@
  */
 
 use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Url;
+use Drupal\webform_securepay\Service\ConfigurationService;
 
 /**
  * Implements hook_help().
  */
-function webform_securepay_help($route_name, RouteMatchInterface $route_match) {
+function webform_securepay_help($route_name, RouteMatchInterface $route_match): array|string|null {
   switch ($route_name) {
     case 'help.page.webform_securepay':
       $output = '<h3>' . t('About') . '</h3>';
-      $output .= '<p>' . t('SecurePay payment integration for Drupal Webforms using OAuth 2.0.') . '</p>';
+      $output .= '<p>' . t('The SecurePay Webform module provides secure payment processing integration for Drupal Webforms using SecurePay\'s OAuth 2.0 API. This module enables you to accept credit card payments directly through your webforms with PCI-compliant security.') . '</p>';
+      
+      $output .= '<h3>' . t('Features') . '</h3>';
+      $output .= '<ul>';
+      $output .= '<li>' . t('Secure payment processing with SecurePay') . '</li>';
+      $output .= '<li>' . t('OAuth 2.0 authentication') . '</li>';
+      $output .= '<li>' . t('Multiple currency support') . '</li>';
+      $output .= '<li>' . t('Dynamic Currency Conversion (DCC) support') . '</li>';
+      $output .= '<li>' . t('3D Secure 2 authentication') . '</li>';
+      $output .= '<li>' . t('Transaction logging and audit trail') . '</li>';
+      $output .= '<li>' . t('Responsive payment forms') . '</li>';
+      $output .= '<li>' . t('Sandbox and live environment support') . '</li>';
+      $output .= '</ul>';
+      
       $output .= '<h3>' . t('Configuration') . '</h3>';
-      $output .= '<p>' . t('<a href="@url">Configure SecurePay settings</a>.', [
-        '@url' => \Drupal::url('webform_securepay.admin_settings'),
+      $output .= '<p>' . t('<a href="@url">Configure SecurePay settings</a> to set up your OAuth credentials and payment options.', [
+        '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
       ]) . '</p>';
+      
+      $output .= '<h3>' . t('Usage') . '</h3>';
+      $output .= '<ol>';
+      $output .= '<li>' . t('Configure your SecurePay credentials in the module settings') . '</li>';
+      $output .= '<li>' . t('Create or edit a webform') . '</li>';
+      $output .= '<li>' . t('Add a "SecurePay" element to your form') . '</li>';
+      $output .= '<li>' . t('Configure the payment amount and currency') . '</li>';
+      $output .= '<li>' . t('Save and publish your form') . '</li>';
+      $output .= '</ol>';
+      
+      $output .= '<h3>' . t('Security') . '</h3>';
+      $output .= '<p>' . t('This module follows security best practices:') . '</p>';
+      $output .= '<ul>';
+      $output .= '<li>' . t('All sensitive card data is handled by SecurePay (PCI compliant)') . '</li>';
+      $output .= '<li>' . t('Payments use secure tokens, never storing card details') . '</li>';
+      $output .= '<li>' . t('SSL/HTTPS is required for live environment') . '</li>';
+      $output .= '<li>' . t('Input validation and sanitization') . '</li>';
+      $output .= '<li>' . t('Rate limiting and fraud protection') . '</li>';
+      $output .= '</ul>';
+      
+      $output .= '<h3>' . t('Support') . '</h3>';
+      $output .= '<p>' . t('For technical support, please use the module\'s issue queue on Drupal.org. For SecurePay account issues, contact SecurePay support directly.') . '</p>';
+      
       return $output;
       
     case 'webform_securepay.admin_settings':
-      return '<p>' . t('Configure SecurePay payment processing settings.') . '</p>';
+      return '<p>' . t('Configure SecurePay payment processing settings. You will need OAuth 2.0 credentials from your SecurePay merchant dashboard.') . '</p>';
+      
+    default:
+      return null;
   }
 }
 
 /**
  * Implements hook_theme().
  */
-function webform_securepay_theme() {
+function webform_securepay_theme(): array {
   return [
     'webform_securepay_element' => [
       'variables' => [
         'element' => [],
-        'value' => NULL,
+        'value' => null,
       ],
       'template' => 'webform-securepay-element',
     ],
   ];
+}
+
+/**
+ * Implements hook_library_info_build().
+ */
+function webform_securepay_library_info_build(): array {
+  $libraries = [];
+  
+  // Build dynamic library info based on configuration
+  $config = \Drupal::config(ConfigurationService::CONFIG_NAME);
+  $configService = \Drupal::service('webform_securepay.configuration');
+  
+  if ($configService->isConfigured()) {
+    try {
+      $apiService = \Drupal::service('webform_securepay.api');
+      $sdkUrl = $apiService->getUiSdkUrl();
+      
+      $libraries['securepay_ui_sdk'] = [
+        'version' => '1.x',
+        'js' => [
+          $sdkUrl => [
+            'type' => 'external',
+            'attributes' => [
+              'defer' => TRUE,
+              'crossorigin' => 'anonymous',
+            ],
+          ],
+        ],
+      ];
+    } catch (\Exception $e) {
+      \Drupal::logger('webform_securepay')->error('Failed to build SecurePay SDK library: @error', [
+        '@error' => $e->getMessage(),
+      ]);
+    }
+  }
+  
+  return $libraries;
+}
+
+/**
+ * Implements hook_page_attachments().
+ */
+function webform_securepay_page_attachments(array &$attachments): void {
+  // Only attach libraries on pages that might contain webforms
+  $route_match = \Drupal::routeMatch();
+  $route_name = $route_match->getRouteName();
+  
+  // Check if we're on a webform-related page
+  if (strpos($route_name, 'entity.webform.') === 0 || 
+      strpos($route_name, 'webform.') === 0 ||
+      $route_name === 'entity.node.canonical') {
+    
+    // Add preconnect for SecurePay domains to improve performance
+    $config = \Drupal::config(ConfigurationService::CONFIG_NAME);
+    $environment = $config->get('environment');
+    
+    if ($environment === ConfigurationService::ENVIRONMENT_LIVE) {
+      $domain = 'https://api.payments.auspost.com.au';
+    } else {
+      $domain = 'https://api.payments.test.auspost.com.au';
+    }
+    
+    $attachments['#attached']['html_head'][] = [
+      [
+        '#tag' => 'link',
+        '#attributes' => [
+          'rel' => 'preconnect',
+          'href' => $domain,
+          'crossorigin' => 'anonymous',
+        ],
+      ],
+      'webform_securepay_preconnect'
+    ];
+  }
+}
+
+/**
+ * Implements hook_cron().
+ */
+function webform_securepay_cron(): void {
+  // Clean up old transaction logs (older than 2 years)
+  $retention_period = \Drupal::config(ConfigurationService::CONFIG_NAME)->get('log_retention_days') ?? 730;
+  $cutoff_time = time() - ($retention_period * 24 * 60 * 60);
+  
+  try {
+    $database = \Drupal::database();
+    $deleted = $database->delete('webform_securepay_transactions')
+      ->condition('created', $cutoff_time, '<')
+      ->execute();
+    
+    if ($deleted > 0) {
+      \Drupal::logger('webform_securepay')->info('Cleaned up @count old transaction records', [
+        '@count' => $deleted,
+      ]);
+    }
+  } catch (\Exception $e) {
+    \Drupal::logger('webform_securepay')->error('Failed to clean up old transaction logs: @error', [
+      '@error' => $e->getMessage(),
+    ]);
+  }
+  
+  // Clear connection test cache (force retest if older than 24 hours)
+  $last_test = \Drupal::state()->get('webform_securepay.last_connection_test');
+  if ($last_test && isset($last_test['timestamp'])) {
+    $test_age = time() - $last_test['timestamp'];
+    if ($test_age > 86400) { // 24 hours
+      \Drupal::state()->delete('webform_securepay.last_connection_test');
+    }
+  }
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function webform_securepay_requirements($phase): array {
+  // This is handled in the .install file
+  return [];
+}
+
+/**
+ * Implements hook_preprocess_webform().
+ */
+function webform_securepay_preprocess_webform(&$variables): void {
+  $webform = $variables['webform'] ?? null;
+  if (!$webform) {
+    return;
+  }
+  
+  // Check if this webform contains SecurePay elements
+  $elements = $webform->getElementsInitialized();
+  $has_securepay = false;
+  
+  array_walk_recursive($elements, function($element) use (&$has_securepay) {
+    if (isset($element['#type']) && $element['#type'] === 'securepay') {
+      $has_securepay = true;
+    }
+  });
+  
+  if ($has_securepay) {
+    // Add CSS class for styling
+    $variables['attributes']['class'][] = 'webform-has-securepay';
+    
+    // Add security notice for users
+    $variables['#attached']['drupalSettings']['webformSecurePay']['securityNotice'] = t('This form uses secure payment processing. Your card details are never stored on this site.');
+  }
+}
+
+/**
+ * Implements hook_webform_element_info_alter().
+ */
+function webform_securepay_webform_element_info_alter(array &$elements): void {
+  // Add our element to the webform elements registry
+  if (isset($elements['securepay'])) {
+    $elements['securepay']['#category'] = 'payment';
+    $elements['securepay']['#states_wrapper'] = TRUE;
+  }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function webform_securepay_form_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id): void {
+  // Add validation to webforms with SecurePay elements
+  if (strpos($form_id, 'webform_submission_') === 0) {
+    $form_object = $form_state->getFormObject();
+    if (method_exists($form_object, 'getWebform')) {
+      $webform = $form_object->getWebform();
+      $elements = $webform->getElementsInitialized();
+      
+      // Check for SecurePay elements
+      $has_securepay = false;
+      array_walk_recursive($elements, function($element) use (&$has_securepay) {
+        if (isset($element['#type']) && $element['#type'] === 'securepay') {
+          $has_securepay = true;
+        }
+      });
+      
+      if ($has_securepay) {
+        // Add custom validation
+        $form['#validate'][] = 'webform_securepay_webform_validate';
+        
+        // Add security attributes
+        $form['#attributes']['data-securepay-form'] = 'true';
+        $form['#attributes']['autocomplete'] = 'off';
+      }
+    }
+  }
+}
+
+/**
+ * Custom validation function for webforms with SecurePay elements.
+ */
+function webform_securepay_webform_validate(array &$form, \Drupal\Core\Form\FormStateInterface $form_state): void {
+  // Custom validation logic can be added here if needed
+  // For now, the element handles its own validation
+}
+
+/**
+ * Implements hook_mail().
+ */
+function webform_securepay_mail($key, &$message, $params): void {
+  switch ($key) {
+    case 'payment_notification':
+      $message['subject'] = $params['subject'];
+      $message['body'][] = $params['body'];
+      $message['headers']['Content-Type'] = 'text/html; charset=UTF-8';
+      break;
+      
+    case 'security_alert':
+      $message['subject'] = t('SecurePay Security Alert: @subject', ['@subject' => $params['subject']]);
+      $message['body'][] = $params['body'];
+      $message['headers']['X-Priority'] = '1'; // High priority
+      break;
+  }
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ */
+function webform_securepay_entity_type_alter(array &$entity_types): void {
+  // No entity type alterations needed currently
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function webform_securepay_module_implements_alter(&$implementations, $hook): void {
+  // Ensure our hooks run after webform module
+  if ($hook === 'form_alter' && isset($implementations['webform_securepay'])) {
+    $group = $implementations['webform_securepay'];
+    unset($implementations['webform_securepay']);
+    $implementations['webform_securepay'] = $group;
+  }
 }

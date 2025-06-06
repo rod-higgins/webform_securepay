@@ -1,101 +1,459 @@
-/* SecurePay Webform Element Styles */
+/**
+ * @file
+ * Styles for SecurePay Webform elements.
+ */
+
+/* ==========================================================================
+   Base Element Styles
+   ========================================================================== */
 
 .webform-securepay-element {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 20px;
-  margin: 10px 0;
-  background: #fff;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  padding: 24px;
+  margin: 16px 0;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: box-shadow 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-.webform-securepay-element h3 {
-  margin-top: 0;
-  color: #333;
+.webform-securepay-element:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.webform-securepay-element .description {
-  margin-bottom: 15px;
-  color: #666;
-  font-size: 14px;
+.webform-securepay-element:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-.payment-amount {
-  font-size: 18px;
-  font-weight: bold;
-  margin-bottom: 15px;
-  color: #333;
+/* ==========================================================================
+   Title and Description
+   ========================================================================== */
+
+.webform-securepay-element__title {
+  margin: 0 0 16px 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.4;
 }
 
-.securepay-container {
+.webform-securepay-element__description {
+  margin-bottom: 20px;
+  color: #6b7280;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Payment Amount Display
+   ========================================================================== */
+
+.webform-securepay-element__amount {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.webform-securepay-element__amount-label {
+  font-weight: 500;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+.webform-securepay-element__amount-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #059669;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.webform-securepay-element__currency {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+/* ==========================================================================
+   Security Notice
+   ========================================================================== */
+
+.webform-securepay-element__security-notice {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: #ecfdf5;
+  border: 1px solid #d1fae5;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: #065f46;
+}
+
+.webform-securepay-element__security-icon {
+  flex-shrink: 0;
+  color: #10b981;
+}
+
+/* ==========================================================================
+   Payment Container
+   ========================================================================== */
+
+.webform-securepay-element__container {
   min-height: 200px;
-  border: 2px dashed #ccc;
-  border-radius: 4px;
-  margin: 15px 0;
-  background: #f9f9f9;
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  margin: 20px 0;
+  background: #f9fafb;
   position: relative;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
-.securepay-container:empty::before {
+.webform-securepay-element__container:empty::before {
   content: 'SecurePay payment form will load here...';
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #999;
+  color: #9ca3af;
   font-style: italic;
+  font-size: 0.875rem;
 }
 
-.securepay-pay-button {
-  background: #007cba;
+.webform-securepay-element__container.loading {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.webform-securepay-element__container.loaded {
+  border-style: solid;
+  border-color: #10b981;
+  background: #ffffff;
+}
+
+.webform-securepay-element__container.error {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+/* ==========================================================================
+   NoScript Message
+   ========================================================================== */
+
+.webform-securepay-element__noscript {
+  padding: 20px;
+  text-align: center;
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.webform-securepay-element__noscript p {
+  margin: 0;
+}
+
+/* ==========================================================================
+   Action Buttons
+   ========================================================================== */
+
+.webform-securepay-element__actions {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.webform-securepay-element__pay-button {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   color: white;
   border: none;
-  padding: 12px 24px;
-  border-radius: 4px;
+  padding: 14px 32px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 16px;
-  margin: 10px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  min-width: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-.securepay-pay-button:hover:not(:disabled) {
-  background: #0056b3;
+.webform-securepay-element__pay-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
 }
 
-.securepay-pay-button:disabled {
-  background: #ccc;
+.webform-securepay-element__pay-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.webform-securepay-element__pay-button:hover:not(:disabled)::before {
+  left: 100%;
+}
+
+.webform-securepay-element__pay-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.4);
+}
+
+.webform-securepay-element__pay-button:disabled {
+  background: #9ca3af;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
-.loading-indicator {
+.webform-securepay-element__pay-button:disabled::before {
+  display: none;
+}
+
+.webform-securepay-element__button-icon {
+  flex-shrink: 0;
+}
+
+.webform-securepay-element__button-text {
+  white-space: nowrap;
+}
+
+/* Button states */
+.webform-securepay-element__pay-button.processing {
+  background: #f59e0b;
+  cursor: wait;
+}
+
+.webform-securepay-element__pay-button.completed {
+  background: #10b981;
+  cursor: default;
+}
+
+/* ==========================================================================
+   Loading Indicator
+   ========================================================================== */
+
+.webform-securepay-element__loading {
   text-align: center;
-  padding: 10px;
-  color: #666;
+  padding: 20px;
+  color: #6b7280;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
-.payment-result {
-  margin-top: 15px;
-  padding: 15px;
-  border-radius: 4px;
+.webform-securepay-element__spinner {
+  color: #3b82f6;
 }
 
-.payment-result.success {
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  color: #155724;
+.webform-securepay-element__loading-text {
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
-.payment-result.error {
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  color: #721c24;
+/* ==========================================================================
+   Result Messages
+   ========================================================================== */
+
+.webform-securepay-element__result {
+  margin-top: 20px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  font-weight: 500;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
 
-/* Responsive */
+.webform-securepay-element__result::before {
+  content: '';
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  margin-top: 2px;
+}
+
+.webform-securepay-element__result.success {
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.webform-securepay-element__result.success::before {
+  background: #10b981;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='white'%3E%3Cpath fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.webform-securepay-element__result.error {
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.webform-securepay-element__result.error::before {
+  background: #ef4444;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='white'%3E%3Cpath fill-rule='evenodd' d='M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.webform-securepay-element__result.warning {
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.webform-securepay-element__result.warning::before {
+  background: #f59e0b;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='white'%3E%3Cpath fill-rule='evenodd' d='M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z' clip-rule='evenodd'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+/* ==========================================================================
+   Form States
+   ========================================================================== */
+
+.webform-has-securepay {
+  position: relative;
+}
+
+.webform-has-securepay::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #3b82f6, #10b981);
+  border-radius: 2px 2px 0 0;
+  z-index: 1;
+}
+
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+
 @media (max-width: 768px) {
   .webform-securepay-element {
-    padding: 15px;
+    padding: 16px;
+    margin: 12px 0;
   }
   
-  .securepay-pay-button {
+  .webform-securepay-element__title {
+    font-size: 1.125rem;
+    margin-bottom: 12px;
+  }
+  
+  .webform-securepay-element__amount {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+  }
+  
+  .webform-securepay-element__pay-button {
     width: 100%;
+    padding: 16px 24px;
+    font-size: 1.125rem;
+  }
+  
+  .webform-securepay-element__container {
+    min-height: 180px;
+    margin: 16px 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .webform-securepay-element {
+    padding: 12px;
+    margin: 8px 0;
+  }
+  
+  .webform-securepay-element__amount-value {
+    font-size: 1.25rem;
+  }
+  
+  .webform-securepay-element__container {
+    min-height: 160px;
+  }
+}
+
+/* ==========================================================================
+   High Contrast Mode Support
+   ========================================================================== */
+
+@media (prefers-contrast: high) {
+  .webform-securepay-element {
+    border-width: 2px;
+    border-color: #000000;
+  }
+  
+  .webform-securepay-element__pay-button {
+    background: #000000;
+    border: 2px solid #ffffff;
+  }
+  
+  .webform-securepay-element__pay-button:hover:not(:disabled) {
+    background: #333333;
+  }
+}
+
+/* ==========================================================================
+   Reduced Motion Support
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .webform-securepay-element,
+  .webform-securepay-element__pay-button,
+  .webform-securepay-element__container {
+    transition: none;
+  }
+  
+  .webform-securepay-element__pay-button:hover:not(:disabled) {
+    transform: none;
+  }
+  
+  .webform-securepay-element__spinner svg animateTransform {
+    animation-duration: 0s;
+  }
+}
+
+/* ==========================================================================
+   Print Styles
+   ========================================================================== */
+
+@media print {
+  .webform-securepay-element {
+    border: 1px solid #000000;
+    box-shadow: none;
+    background: #ffffff;
+  }
+  
+  .webform-securepay-element__pay-button,
+  .webform-securepay-element__loading {
+    display: none;
+  }
+  
+  .webform-securepay-element::after {
+    content: 'Payment form requires online access';
+    display: block;
+    text-align: center;
+    font-style: italic;
+    color: #666666;
+    margin-top: 20px;
   }
 }
