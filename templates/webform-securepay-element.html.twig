@@ -4,39 +4,39 @@
  * SecurePay webform element template.
  *
  * Variables:
- * - element: The element array.
+ * - element: The element array containing configuration.
  * - value: The element value.
  */
 #}
 
 <div{{ attributes.addClass('webform-securepay-element') }}>
   
-  {% if element.title %}
-    <h3>{{ element.title }}</h3>
+  {% if element['#title'] %}
+    <h3>{{ element['#title'] }}</h3>
   {% endif %}
   
-  {% if element.description %}
-    <div class="description">{{ element.description }}</div>
+  {% if element['#description'] %}
+    <div class="description">{{ element['#description'] }}</div>
   {% endif %}
   
   {# Payment amount display #}
-  {% if element.amount %}
+  {% if element['#amount'] %}
     <div class="payment-amount">
-      {{ 'Amount:'|t }} {{ element.currency|default('AUD') }} {{ (element.amount / 100)|number_format(2) }}
+      {{ 'Amount:'|t }} {{ element['#currency']|default('AUD') }} {{ (element['#amount'] / 100)|number_format(2) }}
     </div>
   {% endif %}
   
   {# SecurePay UI container #}
-  <div id="securepay-container-{{ element.element_id }}" class="securepay-container"></div>
+  <div id="securepay-container-{{ element['#element_id'] }}" class="securepay-container"></div>
   
   {# Payment button #}
-  <button type="button" class="btn btn-primary securepay-pay-button" data-container="securepay-container-{{ element.element_id }}">
+  <button type="button" class="btn btn-primary securepay-pay-button" data-container="securepay-container-{{ element['#element_id'] }}">
     {{ 'Pay Now'|t }}
   </button>
   
   {# Loading indicator #}
   <div class="loading-indicator" style="display: none;">
-    {{ 'Processing payment...'|t }}
+    <span>{{ 'Processing payment...'|t }}</span>
   </div>
   
   {# Result display #}

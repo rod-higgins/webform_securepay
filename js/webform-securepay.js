@@ -9,7 +9,12 @@
       $('.webform-securepay-element', context)
         .once('webform-securepay')
         .each(function () {
-          new SecurePayElement(this, settings.webformSecurePay || {});
+          const $element = $(this);
+          const elementSettings = settings.webformSecurePay || {};
+          
+          if (elementSettings.elementId && this.id.includes(elementSettings.elementId)) {
+            new SecurePayElement(this, elementSettings);
+          }
         });
     }
   };
@@ -25,11 +30,18 @@
       this.container = this.$element.find('.securepay-container')[0];
       this.button = this.$element.find('.securepay-pay-button')[0];
       this.securePayInstance = null;
+      this.isProcessing = false;
       
       this.init();
     }
 
     init() {
+      if (!this.container || !this.button) {
+        console.error('SecurePay: Required elements not found');
+        return;
+      }
+
+      this.showLoading();
       this.waitForScript(() => {
         this.initializeUI();
         this.bindEvents();
@@ -37,94 +49,159 @@
     }
 
     waitForScript(callback) {
-      if (typeof securePayUI !== 'undefined') {
-        callback();
-      } else {
-        setTimeout(() => this.waitForScript(callback), 100);
-      }
+      let attempts = 0;
+      const maxAttempts = 50; // 5 seconds max wait
+      
+      const checkScript = () => {
+        if (typeof window.securePayUI !== 'undefined') {
+          callback();
+        } else if (attempts < maxAttempts) {
+          attempts++;
+          setTimeout(checkScript, 100);
+        } else {
+          console.error('SecurePay: SDK failed to load');
+          this.showError('Payment system unavailable. Please refresh the page.');
+          this.hideLoading();
+        }
+      };
+      
+      checkScript();
     }
 
     initializeUI() {
       try {
+        if (!this.settings.clientId || !this.settings.merchantCode) {
+          throw new Error('Missing client configuration');
+        }
+
         const config = {
           containerId: this.container.id,
           clientId: this.settings.clientId,
           merchantCode: this.settings.merchantCode,
+          environment: this.settings.environment || 'sandbox',
           mode: this.settings.mode || 'checkout',
           
           card: {
             onTokeniseSuccess: (data) => this.handleTokenSuccess(data),
-            onTokeniseError: (errors) => this.handleTokenError(errors)
-          },
-          
-          onLoadComplete: () => this.handleLoadComplete()
+            onTokeniseError: (errors) => this.handleTokenError(errors),
+            onLoadComplete: () => this.handleLoadComplete(),
+            onLoadError: (error) => this.handleLoadError(error)
+          }
         };
 
-        this.securePayInstance = new securePayUI.init(config);
+        this.securePayInstance = new window.securePayUI.init(config);
       } catch (error) {
         console.error('SecurePay initialization failed:', error);
-        this.showError('Payment system unavailable');
+        this.showError('Payment system initialization failed');
+        this.hideLoading();
       }
     }
 
     bindEvents() {
+      if (!this.button) return;
+
       $(this.button).on('click', (e) => {
         e.preventDefault();
-        this.processPayment();
+        if (!this.isProcessing) {
+          this.processPayment();
+        }
       });
     }
 
     processPayment() {
+      if (!this.securePayInstance) {
+        this.showError('Payment system not ready');
+        return;
+      }
+
+      this.isProcessing = true;
       this.setButtonState('processing');
       this.showLoading();
+      this.clearResults();
       
       try {
         this.securePayInstance.tokenise();
       } catch (error) {
-        console.error('Payment failed:', error);
+        console.error('Payment tokenization failed:', error);
         this.showError('Payment processing failed');
-        this.setButtonState('ready');
+        this.resetProcessing();
       }
     }
 
     handleTokenSuccess(tokenData) {
+      if (!tokenData || !tokenData.token) {
+        this.showError('Invalid payment token received');
+        this.resetProcessing();
+        return;
+      }
+
       const paymentData = {
         token: tokenData.token,
-        amount: this.settings.amount,
-        currency: this.settings.currency,
-        ipAddress: this.getClientIP()
+        amount: this.settings.amount || 0,
+        currency: this.settings.currency || 'AUD',
+        ipAddress: this.getClientIP(),
+        orderId: this.generateOrderId()
       };
 
+      this.submitPayment(paymentData);
+    }
+
+    submitPayment(paymentData) {
       $.ajax({
         url: '/webform/securepay/callback',
         method: 'POST',
         data: JSON.stringify(paymentData),
         contentType: 'application/json',
+        dataType: 'json',
+        timeout: 30000,
         success: (response) => this.handlePaymentSuccess(response),
-        error: () => this.handlePaymentError('Network error')
+        error: (xhr, status, error) => this.handlePaymentError(xhr, status, error)
       });
     }
 
     handleTokenError(errors) {
-      const message = errors[0]?.message || 'Payment validation failed';
+      let message = 'Payment validation failed';
+      
+      if (Array.isArray(errors) && errors.length > 0) {
+        message = errors[0].message || errors[0].description || message;
+      } else if (typeof errors === 'string') {
+        message = errors;
+      }
+      
       this.showError(message);
-      this.setButtonState('ready');
+      this.resetProcessing();
     }
 
     handlePaymentSuccess(response) {
       this.hideLoading();
-      if (response.success) {
+      
+      if (response && response.success) {
         this.showSuccess(response);
+        this.setButtonState('completed');
       } else {
-        this.showError(response.error || 'Payment failed');
-        this.setButtonState('ready');
+        const errorMsg = response?.error || 'Payment failed';
+        this.showError(errorMsg);
+        this.resetProcessing();
       }
     }
 
-    handlePaymentError(error) {
+    handlePaymentError(xhr, status, error) {
       this.hideLoading();
-      this.showError(error);
-      this.setButtonState('ready');
+      
+      let message = 'Payment processing failed';
+      
+      if (xhr.responseJSON && xhr.responseJSON.error) {
+        message = xhr.responseJSON.error;
+      } else if (status === 'timeout') {
+        message = 'Payment request timed out. Please try again.';
+      } else if (status === 'abort') {
+        message = 'Payment request was cancelled.';
+      } else if (error) {
+        message = `Network error: ${error}`;
+      }
+      
+      this.showError(message);
+      this.resetProcessing();
     }
 
     handleLoadComplete() {
@@ -132,16 +209,31 @@
       this.setButtonState('ready');
     }
 
+    handleLoadError(error) {
+      console.error('SecurePay load error:', error);
+      this.showError('Payment form failed to load');
+      this.hideLoading();
+    }
+
+    resetProcessing() {
+      this.isProcessing = false;
+      this.setButtonState('ready');
+      this.hideLoading();
+    }
+
     setButtonState(state) {
-      const button = $(this.button);
+      const $button = $(this.button);
       
       switch (state) {
         case 'processing':
-          button.prop('disabled', true).text('Processing...');
+          $button.prop('disabled', true).text('Processing...');
+          break;
+        case 'completed':
+          $button.prop('disabled', true).text('Payment Complete');
           break;
         case 'ready':
         default:
-          button.prop('disabled', false).text('Pay Now');
+          $button.prop('disabled', false).text('Pay Now');
           break;
       }
     }
@@ -154,16 +246,21 @@
       this.$element.find('.loading-indicator').hide();
     }
 
+    clearResults() {
+      this.$element.find('.payment-result').hide().empty();
+    }
+
     showSuccess(response) {
       const html = `
         <strong>Payment Successful!</strong><br>
-        Transaction ID: ${response.transaction_id}
+        Transaction ID: ${this.escapeHtml(response.transaction_id || 'N/A')}
       `;
       this.showResult(html, 'success');
     }
 
     showError(message) {
-      this.showResult(`<strong>Error:</strong> ${message}`, 'error');
+      const html = `<strong>Error:</strong> ${this.escapeHtml(message)}`;
+      this.showResult(html, 'error');
     }
 
     showResult(html, type) {
@@ -175,9 +272,21 @@
       this.hideLoading();
     }
 
+    generateOrderId() {
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substr(2, 5);
+      return `WF_${timestamp}_${random}`;
+    }
+
     getClientIP() {
-      // Simple IP detection (not foolproof)
-      return 'unknown';
+      // Basic client info - server should determine real IP
+      return 'browser';
+    }
+
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
   }
 

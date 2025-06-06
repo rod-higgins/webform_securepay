@@ -5,6 +5,8 @@
  * Install, update and uninstall functions for webform_securepay.
  */
 
+use Drupal\Core\Url;
+
 /**
  * Implements hook_install().
  */
@@ -18,7 +20,7 @@ function webform_securepay_install() {
          ->save();
 
   \Drupal::messenger()->addMessage(t('SecurePay module installed. <a href="@url">Configure settings</a>.', [
-    '@url' => \Drupal::url('webform_securepay.admin_settings'),
+    '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
   ]));
 }
 
@@ -26,7 +28,11 @@ function webform_securepay_install() {
  * Implements hook_uninstall().
  */
 function webform_securepay_uninstall() {
+  // Remove configuration
   \Drupal::configFactory()->getEditable('webform_securepay.settings')->delete();
+  
+  // Clean up any remaining state
+  \Drupal::state()->delete('webform_securepay.last_connection_test');
 }
 
 /**
@@ -40,53 +46,65 @@ function webform_securepay_schema() {
         'type' => 'serial',
         'unsigned' => TRUE,
         'not null' => TRUE,
+        'description' => 'Primary key: transaction log ID.',
       ],
       'order_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => TRUE,
+        'description' => 'Unique order identifier.',
       ],
       'transaction_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => FALSE,
+        'description' => 'SecurePay transaction ID.',
       ],
       'amount' => [
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
+        'description' => 'Payment amount in cents.',
       ],
       'currency' => [
         'type' => 'varchar',
         'length' => 3,
         'not null' => TRUE,
         'default' => 'AUD',
+        'description' => 'Currency code (ISO 4217).',
       ],
       'status' => [
         'type' => 'varchar',
         'length' => 32,
         'not null' => TRUE,
+        'description' => 'Transaction status.',
       ],
       'ip_address' => [
         'type' => 'varchar',
         'length' => 45,
         'not null' => FALSE,
+        'description' => 'Client IP address (IPv4 or IPv6).',
       ],
       'created' => [
         'type' => 'int',
         'not null' => TRUE,
         'default' => 0,
+        'description' => 'Timestamp when transaction was created.',
       ],
       'response_data' => [
         'type' => 'text',
         'not null' => FALSE,
+        'size' => 'big',
+        'description' => 'Raw API response data (JSON).',
       ],
     ],
     'primary key' => ['id'],
     'indexes' => [
       'order_id' => ['order_id'],
+      'transaction_id' => ['transaction_id'],
       'status' => ['status'],
       'created' => ['created'],
+      'currency' => ['currency'],
     ],
   ];
 
@@ -101,24 +119,98 @@ function webform_securepay_requirements($phase) {
 
   if ($phase === 'runtime') {
     $config = \Drupal::config('webform_securepay.settings');
+    $configService = \Drupal::service('webform_securepay.configuration');
     
-    if (empty($config->get('client_id')) || empty($config->get('merchant_code'))) {
-      $requirements['webform_securepay'] = [
+    // Check basic configuration
+    if (!$configService->isConfigured()) {
+      $requirements['webform_securepay_config'] = [
         'title' => t('SecurePay Configuration'),
         'value' => t('Not configured'),
         'severity' => REQUIREMENT_WARNING,
-        'description' => t('<a href="@url">Configure SecurePay settings</a>.', [
-          '@url' => \Drupal::url('webform_securepay.admin_settings'),
+        'description' => t('SecurePay is not fully configured. <a href="@url">Configure settings</a>.', [
+          '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
         ]),
       ];
     } else {
-      $requirements['webform_securepay'] = [
+      $requirements['webform_securepay_config'] = [
         'title' => t('SecurePay Configuration'),
-        'value' => t('Configured'),
+        'value' => t('Configured (@env)', [
+          '@env' => $config->get('environment') === 'live' ? 'Live' : 'Sandbox',
+        ]),
         'severity' => REQUIREMENT_OK,
+      ];
+    }
+
+    // Check HTTPS for live environment
+    if ($config->get('environment') === 'live') {
+      $request = \Drupal::request();
+      if (!$request->isSecure()) {
+        $requirements['webform_securepay_ssl'] = [
+          'title' => t('SecurePay SSL'),
+          'value' => t('HTTPS required'),
+          'severity' => REQUIREMENT_ERROR,
+          'description' => t('HTTPS is required when using SecurePay in live environment.'),
+        ];
+      } else {
+        $requirements['webform_securepay_ssl'] = [
+          'title' => t('SecurePay SSL'),
+          'value' => t('HTTPS enabled'),
+          'severity' => REQUIREMENT_OK,
+        ];
+      }
+    }
+
+    // Check database table
+    $database = \Drupal::database();
+    if (!$database->schema()->tableExists('webform_securepay_transactions')) {
+      $requirements['webform_securepay_table'] = [
+        'title' => t('SecurePay Database'),
+        'value' => t('Table missing'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => t('The webform_securepay_transactions table is missing. Try reinstalling the module.'),
       ];
     }
   }
 
   return $requirements;
+}
+
+/**
+ * Implements hook_update_N().
+ * 
+ * Update transaction table schema if needed.
+ */
+function webform_securepay_update_8001() {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  
+  // Add indexes if they don't exist
+  $table = 'webform_securepay_transactions';
+  
+  if ($schema->tableExists($table)) {
+    if (!$schema->indexExists($table, 'transaction_id')) {
+      $schema->addIndex($table, 'transaction_id', ['transaction_id'], [
+        'fields' => [
+          'transaction_id' => [
+            'type' => 'varchar',
+            'length' => 255,
+            'not null' => FALSE,
+          ],
+        ],
+      ]);
+    }
+    
+    if (!$schema->indexExists($table, 'currency')) {
+      $schema->addIndex($table, 'currency', ['currency'], [
+        'fields' => [
+          'currency' => [
+            'type' => 'varchar',
+            'length' => 3,
+            'not null' => TRUE,
+            'default' => 'AUD',
+          ],
+        ],
+      ]);
+    }
+  }
 }

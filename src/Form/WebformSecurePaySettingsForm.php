@@ -2,6 +2,7 @@
 
 namespace Drupal\webform_securepay\Form;
 
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\webform_securepay\Service\ConfigurationService;
@@ -14,10 +15,11 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class WebformSecurePaySettingsForm extends ConfigFormBase {
 
   public function __construct(
+    ConfigFactoryInterface $config_factory,
     private readonly ConfigurationService $config,
     private readonly SecurePayApiService $apiService,
   ) {
-    parent::__construct(\Drupal::configFactory());
+    parent::__construct($config_factory);
   }
 
   /**
@@ -25,6 +27,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
    */
   public static function create(ContainerInterface $container): static {
     return new static(
+      $container->get('config.factory'),
       $container->get('webform_securepay.configuration'),
       $container->get('webform_securepay.api')
     );
@@ -59,6 +62,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       '#title' => $this->t('Client ID'),
       '#default_value' => $this->config->get('client_id'),
       '#required' => TRUE,
+      '#description' => $this->t('Your SecurePay OAuth Client ID.'),
     ];
 
     $form['credentials']['client_secret'] = [
@@ -74,6 +78,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       '#title' => $this->t('Merchant Code'),
       '#default_value' => $this->config->get('merchant_code'),
       '#required' => TRUE,
+      '#description' => $this->t('Your SecurePay merchant code.'),
     ];
 
     $form['credentials']['environment'] = [
@@ -82,6 +87,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       '#options' => ConfigurationService::getEnvironmentOptions(),
       '#default_value' => $this->config->get('environment') ?: 'sandbox',
       '#required' => TRUE,
+      '#description' => $this->t('Use Sandbox for testing and Live for production.'),
     ];
 
     $form['payment'] = [
@@ -95,6 +101,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       '#options' => ConfigurationService::getCurrencyOptions(),
       '#default_value' => $this->config->get('currency') ?: 'AUD',
       '#required' => TRUE,
+      '#description' => $this->t('Default currency for payments.'),
     ];
 
     $form['features'] = [
@@ -136,18 +143,39 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
   /**
    * {@inheritdoc}
    */
+  public function validateForm(array &$form, FormStateInterface $form_state): void {
+    parent::validateForm($form, $form_state);
+
+    // Validate environment setting
+    $environment = $form_state->getValue('environment');
+    if (!in_array($environment, ['sandbox', 'live'])) {
+      $form_state->setErrorByName('environment', $this->t('Invalid environment selected.'));
+    }
+
+    // Validate currency
+    $currency = $form_state->getValue('currency');
+    $validCurrencies = array_keys(ConfigurationService::getCurrencyOptions());
+    if (!in_array($currency, $validCurrencies)) {
+      $form_state->setErrorByName('currency', $this->t('Invalid currency selected.'));
+    }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     $config = $this->config(ConfigurationService::CONFIG_NAME);
     
-    $config->set('client_id', $form_state->getValue('client_id'))
-           ->set('merchant_code', $form_state->getValue('merchant_code'))
+    $config->set('client_id', trim($form_state->getValue('client_id')))
+           ->set('merchant_code', trim($form_state->getValue('merchant_code')))
            ->set('environment', $form_state->getValue('environment'))
            ->set('currency', $form_state->getValue('currency'))
            ->set('dcc_enabled', (bool) $form_state->getValue('dcc_enabled'))
            ->set('three_ds_enabled', (bool) $form_state->getValue('three_ds_enabled'));
 
     // Only update client secret if provided
-    if ($clientSecret = $form_state->getValue('client_secret')) {
+    $clientSecret = trim($form_state->getValue('client_secret'));
+    if (!empty($clientSecret)) {
       $config->set('client_secret', $clientSecret);
     }
     
@@ -162,7 +190,39 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
    * Test connection submit handler.
    */
   public function testConnection(array &$form, FormStateInterface $form_state): void {
-    if ($this->apiService->testConnection()) {
+    // Temporarily save form values for testing
+    $currentConfig = [
+      'client_id' => $this->config->get('client_id'),
+      'client_secret' => $this->config->get('client_secret'),
+      'environment' => $this->config->get('environment'),
+    ];
+
+    // Set test values
+    $testConfig = $this->config(ConfigurationService::CONFIG_NAME);
+    $testConfig->set('client_id', trim($form_state->getValue('client_id')))
+               ->set('environment', $form_state->getValue('environment'));
+
+    $clientSecret = trim($form_state->getValue('client_secret'));
+    if (!empty($clientSecret)) {
+      $testConfig->set('client_secret', $clientSecret);
+    }
+    $testConfig->save();
+
+    // Test connection
+    $success = $this->apiService->testConnection();
+
+    // Restore original config if test values were temporary
+    if (!$form_state->isSubmitted() || $form_state->hasAnyErrors()) {
+      $restoreConfig = $this->config(ConfigurationService::CONFIG_NAME);
+      foreach ($currentConfig as $key => $value) {
+        if ($value !== null) {
+          $restoreConfig->set($key, $value);
+        }
+      }
+      $restoreConfig->save();
+    }
+
+    if ($success) {
       $this->messenger()->addStatus($this->t('Connection successful!'));
     } else {
       $this->messenger()->addError($this->t('Connection failed. Please check your credentials.'));

@@ -4,6 +4,7 @@ namespace Drupal\webform_securepay\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\webform_securepay\Service\PaymentService;
+use Drupal\webform_securepay\Service\ConfigurationService;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -17,6 +18,7 @@ class PaymentController extends ControllerBase {
 
   public function __construct(
     private readonly PaymentService $paymentService,
+    private readonly ConfigurationService $config,
     private readonly LoggerInterface $logger,
   ) {}
 
@@ -26,6 +28,7 @@ class PaymentController extends ControllerBase {
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('webform_securepay.payment'),
+      $container->get('webform_securepay.configuration'),
       $container->get('logger.factory')->get('webform_securepay')
     );
   }
@@ -34,21 +37,56 @@ class PaymentController extends ControllerBase {
    * Process payment callback.
    */
   public function callback(Request $request): JsonResponse {
+    // Check if SecurePay is configured
+    if (!$this->config->isConfigured()) {
+      return $this->errorResponse('Payment system not configured', Response::HTTP_SERVICE_UNAVAILABLE);
+    }
+
     try {
-      $data = json_decode($request->getContent(), true);
+      $content = $request->getContent();
+      if (empty($content)) {
+        return $this->errorResponse('Empty request body', Response::HTTP_BAD_REQUEST);
+      }
+
+      $data = json_decode($content, true);
       
       if (json_last_error() !== JSON_ERROR_NONE) {
-        return $this->errorResponse('Invalid JSON', Response::HTTP_BAD_REQUEST);
+        return $this->errorResponse('Invalid JSON: ' . json_last_error_msg(), Response::HTTP_BAD_REQUEST);
       }
+
+      // Validate required fields
+      $requiredFields = ['token', 'amount', 'currency'];
+      foreach ($requiredFields as $field) {
+        if (empty($data[$field])) {
+          return $this->errorResponse("Missing required field: {$field}", Response::HTTP_BAD_REQUEST);
+        }
+      }
+
+      // Additional validation
+      if (!is_numeric($data['amount']) || $data['amount'] <= 0) {
+        return $this->errorResponse('Invalid amount', Response::HTTP_BAD_REQUEST);
+      }
+
+      // Add client IP to payment data
+      $data['ipAddress'] = $request->getClientIp();
 
       $result = $this->paymentService->processPayment($data);
       
       return new JsonResponse($result);
     }
+    catch (\InvalidArgumentException $e) {
+      $this->logger->warning('Payment validation error: {message}', [
+        'message' => $e->getMessage(),
+        'ip' => $request->getClientIp(),
+      ]);
+      
+      return $this->errorResponse('Validation error: ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
+    }
     catch (\Exception $e) {
       $this->logger->error('Payment callback error: {message}', [
         'message' => $e->getMessage(),
         'ip' => $request->getClientIp(),
+        'trace' => $e->getTraceAsString(),
       ]);
       
       return $this->errorResponse('Payment processing failed', Response::HTTP_INTERNAL_SERVER_ERROR);
@@ -60,26 +98,46 @@ class PaymentController extends ControllerBase {
    */
   public function webhook(Request $request): Response {
     try {
-      $data = json_decode($request->getContent(), true);
+      $content = $request->getContent();
+      if (empty($content)) {
+        $this->logger->warning('Empty webhook received from {ip}', [
+          'ip' => $request->getClientIp(),
+        ]);
+        return new Response('Empty content', Response::HTTP_BAD_REQUEST);
+      }
+
+      $data = json_decode($content, true);
       
       if (json_last_error() !== JSON_ERROR_NONE) {
+        $this->logger->warning('Invalid JSON webhook from {ip}: {error}', [
+          'ip' => $request->getClientIp(),
+          'error' => json_last_error_msg(),
+        ]);
         return new Response('Invalid JSON', Response::HTTP_BAD_REQUEST);
       }
 
-      // Simple webhook logging
+      // Basic webhook validation
+      if (empty($data['event_type'])) {
+        return new Response('Missing event type', Response::HTTP_BAD_REQUEST);
+      }
+
+      // Log webhook for monitoring
       $this->logger->info('Webhook received: {type}', [
-        'type' => $data['event_type'] ?? 'unknown',
+        'type' => $data['event_type'],
+        'order_id' => $data['order_id'] ?? 'unknown',
+        'ip' => $request->getClientIp(),
         'data' => $data,
       ]);
       
       return new Response('OK');
     }
     catch (\Exception $e) {
-      $this->logger->error('Webhook error: {message}', [
+      $this->logger->error('Webhook processing error: {message}', [
         'message' => $e->getMessage(),
+        'ip' => $request->getClientIp(),
       ]);
       
-      return new Response('Error', Response::HTTP_INTERNAL_SERVER_ERROR);
+      return new Response('Processing error', Response::HTTP_INTERNAL_SERVER_ERROR);
     }
   }
 
