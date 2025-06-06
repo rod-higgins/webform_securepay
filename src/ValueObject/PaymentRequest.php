@@ -9,52 +9,15 @@ use Drupal\webform_securepay\Exception\PaymentException;
  */
 class PaymentRequest {
 
-  private string $token;
-  private int $amount;
-  private string $currency;
-  private string $merchantCode;
-  private string $orderId;
-  private ?string $ipAddress;
-  private ?string $userAgent;
-  private ?array $dccQuote;
-  private ?array $threeDSResult;
-
   public function __construct(
-    string $token,
-    int $amount,
-    string $currency,
-    string $merchantCode,
-    string $orderId,
-    ?string $ipAddress = null,
-    ?string $userAgent = null,
-    ?array $dccQuote = null,
-    ?array $threeDSResult = null
+    private readonly string $token,
+    private readonly int $amount,
+    private readonly string $currency,
+    private readonly string $merchantCode,
+    private readonly string $orderId,
+    private readonly ?string $ipAddress = null,
   ) {
-    if ($amount <= 0) {
-      throw new PaymentException('Amount must be greater than zero');
-    }
-    
-    if (empty(trim($token))) {
-      throw new PaymentException('Payment token is required');
-    }
-    
-    if (empty(trim($merchantCode))) {
-      throw new PaymentException('Merchant code is required');
-    }
-    
-    if (empty(trim($orderId))) {
-      throw new PaymentException('Order ID is required');
-    }
-
-    $this->token = $token;
-    $this->amount = $amount;
-    $this->currency = $currency;
-    $this->merchantCode = $merchantCode;
-    $this->orderId = $orderId;
-    $this->ipAddress = $ipAddress;
-    $this->userAgent = $userAgent;
-    $this->dccQuote = $dccQuote;
-    $this->threeDSResult = $threeDSResult;
+    $this->validate();
   }
 
   public function getToken(): string {
@@ -81,18 +44,6 @@ class PaymentRequest {
     return $this->ipAddress;
   }
 
-  public function getUserAgent(): ?string {
-    return $this->userAgent;
-  }
-
-  public function getDccQuote(): ?array {
-    return $this->dccQuote;
-  }
-
-  public function getThreeDSResult(): ?array {
-    return $this->threeDSResult;
-  }
-
   /**
    * Convert to array for API requests.
    */
@@ -104,9 +55,6 @@ class PaymentRequest {
       'merchantCode' => $this->merchantCode,
       'orderId' => $this->orderId,
       'ip' => $this->ipAddress,
-      'userAgent' => $this->userAgent,
-      'dccQuote' => $this->dccQuote,
-      'threeDSResult' => $this->threeDSResult,
     ];
   }
 
@@ -121,9 +69,27 @@ class PaymentRequest {
       merchantCode: $data['merchantCode'] ?? '',
       orderId: $data['orderId'] ?? '',
       ipAddress: $data['ipAddress'] ?? null,
-      userAgent: $data['userAgent'] ?? null,
-      dccQuote: $data['dccQuote'] ?? null,
-      threeDSResult: $data['threeDSResult'] ?? null,
     );
+  }
+
+  /**
+   * Validate payment request data.
+   */
+  private function validate(): void {
+    if (empty(trim($this->token))) {
+      throw PaymentException::validation('Payment token is required');
+    }
+    
+    if ($this->amount <= 0) {
+      throw PaymentException::validation('Amount must be greater than zero');
+    }
+    
+    if (empty(trim($this->merchantCode))) {
+      throw PaymentException::validation('Merchant code is required');
+    }
+    
+    if (empty(trim($this->orderId))) {
+      throw PaymentException::validation('Order ID is required');
+    }
   }
 }

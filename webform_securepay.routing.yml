@@ -1,146 +1,23 @@
-# Admin routes
 webform_securepay.admin_settings:
   path: '/admin/config/webform/securepay'
   defaults:
     _form: '\Drupal\webform_securepay\Form\WebformSecurePaySettingsForm'
-    _title: 'WebForm SecurePay Settings'
+    _title: 'SecurePay Settings'
   requirements:
     _permission: 'administer webform'
 
-# Payment callback routes
 webform_securepay.payment_callback:
   path: '/webform/securepay/callback'
   defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::paymentCallback'
+    _controller: '\Drupal\webform_securepay\Controller\PaymentController::callback'
   requirements:
     _access: 'TRUE'
   methods: [POST]
 
-webform_securepay.initiate_payment_order:
-  path: '/webform/securepay/initiate-order'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::initiatePaymentOrder'
-  requirements:
-    _access: 'TRUE'
-  methods: [POST]
-
-webform_securepay.process_refund:
-  path: '/webform/securepay/refund/{order_id}'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::processRefund'
-  requirements:
-    _permission: 'administer webform'
-    order_id: '[a-zA-Z0-9_-]+'
-  methods: [POST]
-
-webform_securepay.payment_status:
-  path: '/webform/securepay/status/{order_id}'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::getPaymentStatus'
-  requirements:
-    _access: 'TRUE'
-    order_id: '[a-zA-Z0-9_-]+'
-  methods: [GET]
-
-# Webhook route
 webform_securepay.webhook:
   path: '/webform/securepay/webhook'
   defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::webhook'
+    _controller: '\Drupal\webform_securepay\Controller\PaymentController::webhook'
   requirements:
     _access: 'TRUE'
   methods: [POST]
-
-# Test connection route
-webform_securepay.test_connection:
-  path: '/admin/config/webform/securepay/test'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::testConnection'
-    _title: 'Test SecurePay Connection'
-  requirements:
-    _permission: 'administer webform'
-
-# API endpoints for AJAX operations
-webform_securepay.ajax_validate:
-  path: '/webform/securepay/ajax/validate'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::ajaxValidate'
-  requirements:
-    _access: 'TRUE'
-  methods: [POST]
-
-webform_securepay.ajax_fraud_check:
-  path: '/webform/securepay/ajax/fraud-check'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::ajaxFraudCheck'
-  requirements:
-    _access: 'TRUE'
-  methods: [POST]
-
-webform_securepay.ajax_3ds_authenticate:
-  path: '/webform/securepay/ajax/3ds-authenticate'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::ajax3DSAuthenticate'
-  requirements:
-    _access: 'TRUE'
-  methods: [POST]
-
-# Health check route
-webform_securepay.health_check:
-  path: '/webform/securepay/health'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::healthCheck'
-  requirements:
-    _access: 'TRUE'
-  methods: [GET]
-
-# Documentation routes
-webform_securepay.documentation:
-  path: '/admin/help/webform_securepay'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\DocumentationController::index'
-    _title: 'SecurePay Documentation'
-  requirements:
-    _permission: 'access administration pages'
-
-webform_securepay.api_documentation:
-  path: '/admin/help/webform_securepay/api'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\DocumentationController::apiDocumentation'
-    _title: 'SecurePay API Documentation'
-  requirements:
-    _permission: 'access administration pages'
-
-# Reports routes
-webform_securepay.reports:
-  path: '/admin/reports/webform_securepay'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\ReportsController::index'
-    _title: 'SecurePay Transaction Reports'
-  requirements:
-    _permission: 'access site reports'
-
-webform_securepay.reports_export:
-  path: '/admin/reports/webform_securepay/export'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\ReportsController::export'
-  requirements:
-    _permission: 'access site reports'
-  methods: [GET, POST]
-
-# Configuration export/import routes
-webform_securepay.config_export:
-  path: '/admin/config/webform/securepay/export'
-  defaults:
-    _controller: '\Drupal\webform_securepay\Controller\ConfigController::export'
-    _title: 'Export SecurePay Configuration'
-  requirements:
-    _permission: 'administer webform'
-
-webform_securepay.config_import:
-  path: '/admin/config/webform/securepay/import'
-  defaults:
-    _form: '\Drupal\webform_securepay\Form\ConfigImportForm'
-    _title: 'Import SecurePay Configuration'
-  requirements:
-    _permission: 'administer webform'

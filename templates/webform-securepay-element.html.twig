@@ -1,105 +1,45 @@
 {#
 /**
  * @file
- * Simplified SecurePay webform element template.
+ * SecurePay webform element template.
  *
- * Available variables:
+ * Variables:
  * - element: The element array.
  * - value: The element value.
- * - options: The element options.
  */
 #}
 
-{%
-  set classes = [
-    'webform-securepay-element',
-    element.environment == 'sandbox' ? 'sandbox-mode' : 'live-mode',
-    element.dcc_enabled ? 'dcc-enabled',
-    element.three_ds_enabled ? 'three-ds-enabled',
-  ]
-%}
-
-<div{{ attributes.addClass(classes) }}>
+<div{{ attributes.addClass('webform-securepay-element') }}>
   
-  {# Element header with title and badges #}
   {% if element.title %}
-    {% include '@webform_securepay/securepay-header.html.twig' with {
-      title: element.title,
-      environment: element.environment,
-      features: {
-        three_ds: element.three_ds_enabled,
-        fraud_guard: element.fraud_guard_enabled
-      }
-    } %}
+    <h3>{{ element.title }}</h3>
   {% endif %}
   
-  {# Element description #}
   {% if element.description %}
-    <div class="webform-securepay-description">
-      {{ element.description }}
+    <div class="description">{{ element.description }}</div>
+  {% endif %}
+  
+  {# Payment amount display #}
+  {% if element.amount %}
+    <div class="payment-amount">
+      {{ 'Amount:'|t }} {{ element.currency|default('AUD') }} {{ (element.amount / 100)|number_format(2) }}
     </div>
   {% endif %}
   
-  {# Payment amount and card acceptance display #}
-  {% include '@webform_securepay/payment-info.html.twig' with {
-    amount: element.amount,
-    currency: element.currency,
-    allowed_card_types: element.allowed_card_types,
-    show_card_icons: element.show_card_icons,
-    mode: element.mode
-  } %}
+  {# SecurePay UI container #}
+  <div id="securepay-container-{{ element.element_id }}" class="securepay-container"></div>
   
-  {# Main SecurePay UI container #}
-  <div class="webform-securepay-payment">
-    {{ element.securepay_container }}
-  </div>
-  
-  {# DCC options (if enabled) #}
-  {% if element.mode == 'dcc' %}
-    {{ element.dcc_options }}
-  {% endif %}
-  
-  {# Payment controls #}
-  <div class="webform-securepay-controls">
-    {{ element.payment_button }}
-    {% if element.reset_button %}
-      {{ element.reset_button }}
-    {% endif %}
-  </div>
+  {# Payment button #}
+  <button type="button" class="btn btn-primary securepay-pay-button" data-container="securepay-container-{{ element.element_id }}">
+    {{ 'Pay Now'|t }}
+  </button>
   
   {# Loading indicator #}
   <div class="loading-indicator" style="display: none;">
-    <div class="spinner"></div>
-    <span class="loading-text">{{ 'Processing your payment...'|t }}</span>
+    {{ 'Processing payment...'|t }}
   </div>
   
-  {# Transaction result display #}
-  {% if value.transaction_id or value.status %}
-    {% include '@webform_securepay/payment-result.html.twig' with {
-      result: value
-    } %}
-  {% else %}
-    {{ element.result }}
-  {% endif %}
-  
-  {# Footer with security badges #}
-  {% include '@webform_securepay/securepay-footer.html.twig' with {
-    environment: element.environment
-  } %}
+  {# Result display #}
+  <div class="payment-result" style="display: none;"></div>
   
 </div>
-
-{# Custom styling and scripts #}
-{% if element.custom_css %}
-  <style>{{ element.custom_css|raw }}</style>
-{% endif %}
-
-{% if element.custom_javascript %}
-  <script>
-    (function($) {
-      $(document).ready(function() {
-        {{ element.custom_javascript|raw }}
-      });
-    })(jQuery);
-  </script>
-{% endif %}

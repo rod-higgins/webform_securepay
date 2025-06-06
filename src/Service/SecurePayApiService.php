@@ -2,210 +2,120 @@
 
 namespace Drupal\webform_securepay\Service;
 
-use Drupal\webform_securepay\Exception\ApiException;
+use Drupal\webform_securepay\Exception\PaymentException;
+use Drupal\webform_securepay\ValueObject\PaymentRequest;
+use Drupal\webform_securepay\ValueObject\PaymentResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 use Psr\Log\LoggerInterface;
 
 /**
- * Improved SecurePay API service with better error handling.
+ * SecurePay API service.
  */
-class SecurePayApiService implements SecurePayApiServiceInterface {
-
-  private const AUDIENCE = 'https://api.payments.auspost.com.au';
-  private const GRANT_TYPE = 'client_credentials';
-  private const TOKEN_BUFFER_SECONDS = 60;
+class SecurePayApiService {
 
   private ?string $accessToken = null;
   private int $tokenExpiry = 0;
 
   public function __construct(
     private readonly ClientInterface $httpClient,
-    private readonly ConfigurationService $configService,
+    private readonly ConfigurationService $config,
     private readonly LoggerInterface $logger,
   ) {}
 
   /**
-   * {@inheritdoc}
+   * Process payment.
    */
-  public function processPayment(array $payment_data, array $element_settings = []): array {
-    $config = $this->configService->getSecurePayConfig();
-    $request = $this->buildPaymentRequest($payment_data, $config);
-    
+  public function processPayment(PaymentRequest $request): PaymentResult {
     try {
-      $response = $this->makeApiRequest('POST', '/v2/payments', $request);
+      $response = $this->makeApiRequest('POST', '/v2/payments', $request->toArray());
       
-      // Log successful payment
-      if ($config->isDebugMode()) {
-        $this->logger->debug('Payment processed successfully: {order_id}', [
-          'order_id' => $request['orderId'],
-        ]);
+      if (isset($response['transactionId'])) {
+        return PaymentResult::success(
+          $response['transactionId'],
+          $response['status'] ?? 'completed',
+          $response
+        );
       }
       
-      return $response;
+      throw PaymentException::api('No transaction ID in response');
     }
     catch (\Exception $e) {
-      $this->logger->error('Payment processing failed: {message}', [
+      $this->logger->error('Payment failed: {message}', [
         'message' => $e->getMessage(),
-        'order_id' => $request['orderId'] ?? 'unknown',
+        'order_id' => $request->getOrderId(),
       ]);
-      throw new ApiException("Payment processing failed: {$e->getMessage()}", 0, $e);
+      
+      return PaymentResult::failure($e->getMessage());
     }
   }
 
   /**
-   * {@inheritdoc}
-   */
-  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = null): array|false {
-    $config = $this->configService->getSecurePayConfig();
-    
-    $request = [
-      'merchantCode' => $config->getMerchantCode(),
-      'amount' => $amount,
-      'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-      'orderType' => $order_type,
-    ];
-
-    if ($order_reference) {
-      $request['orderReference'] = $order_reference;
-    }
-
-    try {
-      return $this->makeApiRequest('POST', '/v2/payments/orders/initiate', $request);
-    }
-    catch (\Exception $e) {
-      $this->logger->error('Failed to initiate payment order: {message}', [
-        'message' => $e->getMessage(),
-        'order_type' => $order_type,
-        'amount' => $amount,
-      ]);
-      return false;
-    }
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = null): array|false {
-    $config = $this->configService->getSecurePayConfig();
-    
-    $request = [
-      'merchantCode' => $merchant_code ?: $config->getMerchantCode(),
-      'amount' => $amount,
-      'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-    ];
-
-    try {
-      $response = $this->makeApiRequest('POST', "/v2/orders/{$order_id}/refunds", $request);
-      
-      $this->logger->info('Refund processed: {order_id} for {amount} cents', [
-        'order_id' => $order_id,
-        'amount' => $amount,
-      ]);
-      
-      return $response;
-    }
-    catch (\Exception $e) {
-      $this->logger->error('Failed to process refund: {message}', [
-        'message' => $e->getMessage(),
-        'order_id' => $order_id,
-        'amount' => $amount,
-      ]);
-      return false;
-    }
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function testConnection(): bool {
-    try {
-      $result = $this->makeApiRequest('GET', '/v2/health');
-      $isHealthy = ($result['status'] ?? '') === 'UP';
-      
-      if ($isHealthy) {
-        $this->logger->info('SecurePay API connection test successful');
-      } else {
-        $this->logger->warning('SecurePay API connection test failed: unhealthy status');
-      }
-      
-      return $isHealthy;
-    }
-    catch (\Exception $e) {
-      $this->logger->error('SecurePay API connection test failed: {message}', [
-        'message' => $e->getMessage(),
-      ]);
-      return false;
-    }
-  }
-
-  /**
-   * {@inheritdoc}
+   * Get UI SDK URL.
    */
   public function getUiSdkUrl(): string {
-    $config = $this->configService->getSecurePayConfig();
-    $endpoints = $config->getApiEndpoints();
+    $endpoints = $this->config->getApiEndpoints();
     return $endpoints['ui_sdk'];
   }
 
   /**
-   * {@inheritdoc}
+   * Test API connection.
    */
-  public function getThreeDS2SdkUrl(): string {
-    $config = $this->configService->getSecurePayConfig();
-    $endpoints = $config->getApiEndpoints();
-    return $endpoints['threeDS_sdk'];
+  public function testConnection(): bool {
+    try {
+      $this->getAccessToken();
+      return true;
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Connection test failed: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+      return false;
+    }
   }
 
   /**
-   * Get or refresh OAuth 2.0 access token.
+   * Get or refresh access token.
    */
   private function getAccessToken(): string {
     if ($this->accessToken && time() < $this->tokenExpiry) {
       return $this->accessToken;
     }
 
-    $config = $this->configService->getSecurePayConfig();
-    $endpoints = $config->getApiEndpoints();
+    $endpoints = $this->config->getApiEndpoints();
+    $clientId = $this->config->get('client_id');
+    $clientSecret = $this->config->get('client_secret');
+
+    if (empty($clientId) || empty($clientSecret)) {
+      throw PaymentException::configuration('Missing client credentials');
+    }
 
     try {
       $response = $this->httpClient->post($endpoints['auth'], [
         'headers' => [
-          'Authorization' => 'Basic ' . base64_encode($config->getClientId() . ':' . $config->getClientSecret()),
+          'Authorization' => 'Basic ' . base64_encode("{$clientId}:{$clientSecret}"),
           'Content-Type' => 'application/x-www-form-urlencoded',
         ],
         'form_params' => [
-          'grant_type' => self::GRANT_TYPE,
-          'audience' => self::AUDIENCE,
+          'grant_type' => 'client_credentials',
+          'audience' => 'https://api.payments.auspost.com.au',
         ],
-        'timeout' => $config->getTimeout(),
+        'timeout' => 30,
       ]);
 
       $data = json_decode($response->getBody()->getContents(), true);
       
       if (empty($data['access_token'])) {
-        throw new ApiException('Invalid token response from SecurePay');
+        throw PaymentException::api('Invalid token response');
       }
 
       $this->accessToken = $data['access_token'];
-      $this->tokenExpiry = time() + ($data['expires_in'] ?? 3600) - self::TOKEN_BUFFER_SECONDS;
-
-      if ($config->isDebugMode()) {
-        $this->logger->debug('OAuth token refreshed, expires in {seconds} seconds', [
-          'seconds' => $data['expires_in'] ?? 3600,
-        ]);
-      }
+      $this->tokenExpiry = time() + ($data['expires_in'] ?? 3600) - 60;
 
       return $this->accessToken;
     }
     catch (RequestException $e) {
-      $statusCode = $e->getResponse() ? $e->getResponse()->getStatusCode() : 0;
-      
-      if ($statusCode === 401) {
-        throw ApiException::authenticationFailed('Invalid client credentials');
-      }
-      
-      throw new ApiException("Authentication failed: {$e->getMessage()}", $statusCode, $e);
+      throw PaymentException::api('Authentication failed: ' . $e->getMessage());
     }
   }
 
@@ -214,8 +124,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
    */
   private function makeApiRequest(string $method, string $endpoint, ?array $data = null): array {
     $token = $this->getAccessToken();
-    $config = $this->configService->getSecurePayConfig();
-    $endpoints = $config->getApiEndpoints();
+    $endpoints = $this->config->getApiEndpoints();
 
     $options = [
       'headers' => [
@@ -223,7 +132,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
         'Content-Type' => 'application/json',
         'Accept' => 'application/json',
       ],
-      'timeout' => $config->getTimeout(),
+      'timeout' => 30,
     ];
 
     if ($data) {
@@ -235,41 +144,14 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       $responseData = json_decode($response->getBody()->getContents(), true);
       
       if (json_last_error() !== JSON_ERROR_NONE) {
-        throw new ApiException('Invalid JSON response from SecurePay API');
+        throw PaymentException::api('Invalid JSON response');
       }
       
       return $responseData ?: [];
     }
     catch (RequestException $e) {
       $statusCode = $e->getResponse() ? $e->getResponse()->getStatusCode() : 0;
-      
-      // Handle specific HTTP status codes
-      switch ($statusCode) {
-        case 400:
-          throw ApiException::httpError($statusCode, 'Bad request - check payment data');
-        case 401:
-          throw ApiException::authenticationFailed();
-        case 429:
-          throw ApiException::apiRateLimited();
-        case 503:
-          throw ApiException::serviceUnavailable();
-        default:
-          throw new ApiException("API request failed: {$e->getMessage()}", $statusCode, $e);
-      }
+      throw PaymentException::api("Request failed ({$statusCode}): " . $e->getMessage(), $statusCode);
     }
-  }
-
-  /**
-   * Build payment request payload.
-   */
-  private function buildPaymentRequest(array $payment_data, $config): array {
-    return [
-      'merchantCode' => $config->getMerchantCode(),
-      'amount' => $payment_data['amount'],
-      'token' => $payment_data['token'],
-      'ip' => $payment_data['ip'] ?? $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-      'orderId' => $payment_data['orderId'],
-      'currency' => $payment_data['currency'] ?? $config->getCurrency(),
-    ];
   }
 }

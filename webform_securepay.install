@@ -2,10 +2,8 @@
 
 /**
  * @file
- * Install, update and uninstall functions for the webform_securepay module.
+ * Install, update and uninstall functions for webform_securepay.
  */
-
-use Drupal\Core\Database\Database;
 
 /**
  * Implements hook_install().
@@ -13,40 +11,13 @@ use Drupal\Core\Database\Database;
 function webform_securepay_install() {
   $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
   
-  // Set default configuration values
-  $defaults = [
-    'client_id' => '',
-    'client_secret' => '',
-    'merchant_code' => '',
-    'environment' => 'sandbox',
-    'currency' => 'AUD',
-    'order_id_prefix' => 'WF_',
-    'timeout' => 30,
-    'allowed_card_types' => ['visa', 'mastercard', 'amex', 'diners'],
-    'dcc_enabled' => FALSE,
-    'three_ds_enabled' => FALSE,
-    'fraud_guard_enabled' => FALSE,
-    'log_transactions' => FALSE,
-    'debug_mode' => FALSE,
-    'webhook_enabled' => FALSE,
-    'webhook_secret' => '',
-    'rate_limit_enabled' => TRUE,
-    'max_attempts_per_hour' => 50,
-    'email_notifications' => FALSE,
-    'notification_email' => '',
-    'data_retention_days' => 90,
-  ];
+  $config->set('environment', 'sandbox')
+         ->set('currency', 'AUD')
+         ->set('dcc_enabled', FALSE)
+         ->set('three_ds_enabled', FALSE)
+         ->save();
 
-  foreach ($defaults as $key => $value) {
-    $config->set($key, $value);
-  }
-  
-  $config->save();
-
-  // Create database tables
-  _webform_securepay_create_tables();
-
-  \Drupal::messenger()->addMessage(t('SecurePay module installed. Configure your settings at <a href="@url">SecurePay Settings</a>.', [
+  \Drupal::messenger()->addMessage(t('SecurePay module installed. <a href="@url">Configure settings</a>.', [
     '@url' => \Drupal::url('webform_securepay.admin_settings'),
   ]));
 }
@@ -55,184 +26,71 @@ function webform_securepay_install() {
  * Implements hook_uninstall().
  */
 function webform_securepay_uninstall() {
-  // Clean up configuration
   \Drupal::configFactory()->getEditable('webform_securepay.settings')->delete();
-  
-  // Drop custom tables
-  $schema = Database::getConnection()->schema();
-  $tables = ['webform_securepay_transactions', 'webform_securepay_webhooks'];
-  
-  foreach ($tables as $table) {
-    if ($schema->tableExists($table)) {
-      $schema->dropTable($table);
-    }
-  }
-  
-  drupal_flush_all_caches();
 }
 
 /**
  * Implements hook_schema().
  */
 function webform_securepay_schema() {
-  $schema = [];
-
-  // Simplified transaction logging table
   $schema['webform_securepay_transactions'] = [
-    'description' => 'Stores SecurePay transaction data',
+    'description' => 'SecurePay transaction logs',
     'fields' => [
       'id' => [
         'type' => 'serial',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Primary Key',
       ],
       'order_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => TRUE,
-        'description' => 'Order ID',
       ],
       'transaction_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => FALSE,
-        'description' => 'Transaction ID',
       ],
       'amount' => [
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Amount in cents',
       ],
       'currency' => [
         'type' => 'varchar',
         'length' => 3,
         'not null' => TRUE,
         'default' => 'AUD',
-        'description' => 'Currency',
       ],
       'status' => [
         'type' => 'varchar',
         'length' => 32,
         'not null' => TRUE,
-        'description' => 'Status',
-      ],
-      'gateway_response_code' => [
-        'type' => 'varchar',
-        'length' => 16,
-        'not null' => FALSE,
-        'description' => 'Gateway response code',
-      ],
-      'gateway_response_message' => [
-        'type' => 'text',
-        'not null' => FALSE,
-        'description' => 'Gateway response message',
       ],
       'ip_address' => [
         'type' => 'varchar',
         'length' => 45,
         'not null' => FALSE,
-        'description' => 'Client IP',
-      ],
-      'user_agent' => [
-        'type' => 'text',
-        'not null' => FALSE,
-        'description' => 'User agent',
-      ],
-      'raw_response' => [
-        'type' => 'text',
-        'size' => 'big',
-        'not null' => FALSE,
-        'description' => 'Raw API response',
       ],
       'created' => [
         'type' => 'int',
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Created timestamp',
       ],
-      'updated' => [
-        'type' => 'int',
-        'not null' => TRUE,
-        'default' => 0,
-        'description' => 'Updated timestamp',
-      ],
-    ],
-    'primary key' => ['id'],
-    'unique keys' => ['order_id' => ['order_id']],
-    'indexes' => [
-      'status' => ['status'],
-      'created' => ['created'],
-      'ip_address' => ['ip_address'],
-    ],
-  ];
-
-  // Webhook logs table
-  $schema['webform_securepay_webhooks'] = [
-    'description' => 'Stores SecurePay webhook events',
-    'fields' => [
-      'id' => [
-        'type' => 'serial',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'description' => 'Primary Key',
-      ],
-      'event_type' => [
-        'type' => 'varchar',
-        'length' => 128,
-        'not null' => TRUE,
-        'description' => 'Event type',
-      ],
-      'order_id' => [
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => FALSE,
-        'description' => 'Order ID',
-      ],
-      'payload' => [
+      'response_data' => [
         'type' => 'text',
-        'size' => 'big',
-        'not null' => TRUE,
-        'description' => 'Payload data',
-      ],
-      'processed' => [
-        'type' => 'int',
-        'size' => 'tiny',
-        'not null' => TRUE,
-        'default' => 0,
-        'description' => 'Processed flag',
-      ],
-      'created' => [
-        'type' => 'int',
-        'not null' => TRUE,
-        'default' => 0,
-        'description' => 'Created timestamp',
+        'not null' => FALSE,
       ],
     ],
     'primary key' => ['id'],
     'indexes' => [
-      'event_type' => ['event_type'],
       'order_id' => ['order_id'],
+      'status' => ['status'],
       'created' => ['created'],
     ],
   ];
 
   return $schema;
-}
-
-/**
- * Create database tables.
- */
-function _webform_securepay_create_tables() {
-  $schema = webform_securepay_schema();
-  $database = Database::getConnection();
-  
-  foreach ($schema as $table_name => $table_schema) {
-    if (!$database->schema()->tableExists($table_name)) {
-      $database->schema()->createTable($table_name, $table_schema);
-    }
-  }
 }
 
 /**
@@ -244,44 +102,20 @@ function webform_securepay_requirements($phase) {
   if ($phase === 'runtime') {
     $config = \Drupal::config('webform_securepay.settings');
     
-    // Check configuration
-    $client_id = $config->get('client_id');
-    $merchant_code = $config->get('merchant_code');
-    
-    if (empty($client_id) || empty($merchant_code)) {
-      $requirements['webform_securepay_config'] = [
+    if (empty($config->get('client_id')) || empty($config->get('merchant_code'))) {
+      $requirements['webform_securepay'] = [
         'title' => t('SecurePay Configuration'),
         'value' => t('Not configured'),
         'severity' => REQUIREMENT_WARNING,
-        'description' => t('Configure your SecurePay credentials at <a href="@url">Settings</a>.', [
+        'description' => t('<a href="@url">Configure SecurePay settings</a>.', [
           '@url' => \Drupal::url('webform_securepay.admin_settings'),
         ]),
       ];
     } else {
-      $requirements['webform_securepay_config'] = [
+      $requirements['webform_securepay'] = [
         'title' => t('SecurePay Configuration'),
         'value' => t('Configured'),
         'severity' => REQUIREMENT_OK,
-      ];
-    }
-    
-    // Check SSL in production
-    if ($config->get('environment') === 'live' && !isset($_SERVER['HTTPS'])) {
-      $requirements['webform_securepay_ssl'] = [
-        'title' => t('SecurePay SSL'),
-        'value' => t('SSL required'),
-        'severity' => REQUIREMENT_ERROR,
-        'description' => t('SSL/HTTPS is required in production mode.'),
-      ];
-    }
-    
-    // Check webform dependency
-    if (!\Drupal::moduleHandler()->moduleExists('webform')) {
-      $requirements['webform_securepay_webform'] = [
-        'title' => t('SecurePay Webform Dependency'),
-        'value' => t('Webform module required'),
-        'severity' => REQUIREMENT_ERROR,
-        'description' => t('The Webform module must be installed and enabled.'),
       ];
     }
   }

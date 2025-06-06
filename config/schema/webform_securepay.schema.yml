@@ -1,8 +1,7 @@
 webform_securepay.settings:
   type: config_object
-  label: 'WebForm SecurePay settings'
+  label: 'SecurePay settings'
   mapping:
-    # Authentication Settings
     client_id:
       type: string
       label: 'Client ID'
@@ -15,69 +14,12 @@ webform_securepay.settings:
     environment:
       type: string
       label: 'Environment'
-    
-    # Payment Settings
     currency:
       type: string
       label: 'Default Currency'
-    order_id_prefix:
-      type: string
-      label: 'Order ID Prefix'
-    timeout:
-      type: integer
-      label: 'API Timeout (seconds)'
-    
-    # Card Settings
-    allowed_card_types:
-      type: sequence
-      label: 'Allowed Card Types'
-      sequence:
-        type: string
-    
-    # Feature Flags
     dcc_enabled:
       type: boolean
       label: 'Enable Dynamic Currency Conversion'
     three_ds_enabled:
       type: boolean
       label: 'Enable 3D Secure 2'
-    fraud_guard_enabled:
-      type: boolean
-      label: 'Enable FraudGuard'
-    
-    # Advanced Settings
-    log_transactions:
-      type: boolean
-      label: 'Log transactions'
-    debug_mode:
-      type: boolean
-      label: 'Enable Debug Mode'
-    
-    # Webhook Settings
-    webhook_enabled:
-      type: boolean
-      label: 'Enable Webhook Processing'
-    webhook_secret:
-      type: string
-      label: 'Webhook Secret'
-    
-    # Rate Limiting
-    rate_limit_enabled:
-      type: boolean
-      label: 'Enable Rate Limiting'
-    max_attempts_per_hour:
-      type: integer
-      label: 'Maximum Attempts per Hour'
-    
-    # Email Notifications
-    email_notifications:
-      type: boolean
-      label: 'Enable Email Notifications'
-    notification_email:
-      type: email
-      label: 'Notification Email Address'
-    
-    # Data Retention
-    data_retention_days:
-      type: integer
-      label: 'Data Retention Period (days)'

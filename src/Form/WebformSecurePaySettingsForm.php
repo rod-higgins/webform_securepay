@@ -5,8 +5,7 @@ namespace Drupal\webform_securepay\Form;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\webform_securepay\Service\ConfigurationService;
-use Drupal\webform_securepay\Service\FormBuilderService;
-use Drupal\webform_securepay\Service\SecurePayApiServiceInterface;
+use Drupal\webform_securepay\Service\SecurePayApiService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -15,9 +14,8 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class WebformSecurePaySettingsForm extends ConfigFormBase {
 
   public function __construct(
-    private readonly ConfigurationService $configService,
-    private readonly FormBuilderService $formBuilder,
-    private readonly SecurePayApiServiceInterface $apiService,
+    private readonly ConfigurationService $config,
+    private readonly SecurePayApiService $apiService,
   ) {
     parent::__construct(\Drupal::configFactory());
   }
@@ -28,7 +26,6 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('webform_securepay.configuration'),
-      $container->get('webform_securepay.form_builder'),
       $container->get('webform_securepay.api')
     );
   }
@@ -37,7 +34,7 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   public function getFormId(): string {
-    return 'webform_securepay_admin_settings';
+    return 'webform_securepay_settings';
   }
 
   /**
@@ -51,17 +48,87 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   public function buildForm(array $form, FormStateInterface $form_state): array {
-    $form['#tree'] = false;
+    $form['credentials'] = [
+      '#type' => 'fieldset',
+      '#title' => $this->t('SecurePay Credentials'),
+      '#description' => $this->t('OAuth 2.0 credentials from your SecurePay merchant dashboard.'),
+    ];
 
-    // Add configuration status
-    $form['status'] = $this->buildStatusSection();
+    $form['credentials']['client_id'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Client ID'),
+      '#default_value' => $this->config->get('client_id'),
+      '#required' => TRUE,
+    ];
 
-    // Build form sections using FormBuilderService
-    $form['authentication'] = $this->formBuilder->buildAuthenticationSection();
-    $form['payment'] = $this->formBuilder->buildPaymentSection();
-    $form['features'] = $this->formBuilder->buildFeaturesSection();
-    $form['advanced'] = $this->formBuilder->buildAdvancedSection();
-    $form['test'] = $this->formBuilder->buildTestSection();
+    $form['credentials']['client_secret'] = [
+      '#type' => 'password',
+      '#title' => $this->t('Client Secret'),
+      '#description' => $this->config->get('client_secret') 
+        ? $this->t('Leave empty to keep current secret.')
+        : $this->t('Enter your client secret.'),
+    ];
+
+    $form['credentials']['merchant_code'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Merchant Code'),
+      '#default_value' => $this->config->get('merchant_code'),
+      '#required' => TRUE,
+    ];
+
+    $form['credentials']['environment'] = [
+      '#type' => 'select',
+      '#title' => $this->t('Environment'),
+      '#options' => ConfigurationService::getEnvironmentOptions(),
+      '#default_value' => $this->config->get('environment') ?: 'sandbox',
+      '#required' => TRUE,
+    ];
+
+    $form['payment'] = [
+      '#type' => 'fieldset',
+      '#title' => $this->t('Payment Settings'),
+    ];
+
+    $form['payment']['currency'] = [
+      '#type' => 'select',
+      '#title' => $this->t('Default Currency'),
+      '#options' => ConfigurationService::getCurrencyOptions(),
+      '#default_value' => $this->config->get('currency') ?: 'AUD',
+      '#required' => TRUE,
+    ];
+
+    $form['features'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Features'),
+      '#open' => FALSE,
+    ];
+
+    $form['features']['dcc_enabled'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Enable Dynamic Currency Conversion'),
+      '#default_value' => $this->config->get('dcc_enabled'),
+      '#description' => $this->t('Allow customers to pay in their card currency.'),
+    ];
+
+    $form['features']['three_ds_enabled'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Enable 3D Secure 2'),
+      '#default_value' => $this->config->get('three_ds_enabled'),
+      '#description' => $this->t('Enhanced authentication for fraud protection.'),
+    ];
+
+    $form['test'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Test Connection'),
+      '#open' => FALSE,
+    ];
+
+    $form['test']['test_connection'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Test Connection'),
+      '#submit' => ['::testConnection'],
+      '#limit_validation_errors' => [],
+    ];
 
     return parent::buildForm($form, $form_state);
   }
@@ -69,66 +136,24 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
   /**
    * {@inheritdoc}
    */
-  public function validateForm(array &$form, FormStateInterface $form_state): void {
-    parent::validateForm($form, $form_state);
-
-    $errors = $this->formBuilder->validateFormValues($form_state->getValues());
-    
-    foreach ($errors as $field => $message) {
-      $form_state->setErrorByName($field, $message);
-    }
-
-    // Additional validation for live environment
-    $environment = $form_state->getValue(ConfigurationService::ENVIRONMENT);
-    if ($environment === 'live') {
-      $this->validateLiveEnvironment($form_state);
-    }
-  }
-
-  /**
-   * {@inheritdoc}
-   */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
-    $values = $this->formBuilder->processSubmissionValues($form_state->getValues());
-    
     $config = $this->config(ConfigurationService::CONFIG_NAME);
     
-    // Save all configuration values
-    $configKeys = [
-      ConfigurationService::CLIENT_ID,
-      ConfigurationService::MERCHANT_CODE,
-      ConfigurationService::ENVIRONMENT,
-      ConfigurationService::CURRENCY,
-      ConfigurationService::ORDER_ID_PREFIX,
-      ConfigurationService::ALLOWED_CARD_TYPES,
-      ConfigurationService::DCC_ENABLED,
-      ConfigurationService::THREE_DS_ENABLED,
-      ConfigurationService::FRAUD_GUARD_ENABLED,
-      ConfigurationService::TIMEOUT,
-      ConfigurationService::LOG_TRANSACTIONS,
-      ConfigurationService::DEBUG_MODE,
-      ConfigurationService::RATE_LIMIT_ENABLED,
-      ConfigurationService::MAX_ATTEMPTS_PER_HOUR,
-    ];
-
-    foreach ($configKeys as $key) {
-      if (array_key_exists($key, $values)) {
-        $config->set($key, $values[$key]);
-      }
-    }
+    $config->set('client_id', $form_state->getValue('client_id'))
+           ->set('merchant_code', $form_state->getValue('merchant_code'))
+           ->set('environment', $form_state->getValue('environment'))
+           ->set('currency', $form_state->getValue('currency'))
+           ->set('dcc_enabled', (bool) $form_state->getValue('dcc_enabled'))
+           ->set('three_ds_enabled', (bool) $form_state->getValue('three_ds_enabled'));
 
     // Only update client secret if provided
-    $clientSecret = $values[ConfigurationService::CLIENT_SECRET] ?? '';
-    if (!empty($clientSecret)) {
-      $config->set(ConfigurationService::CLIENT_SECRET, $clientSecret);
+    if ($clientSecret = $form_state->getValue('client_secret')) {
+      $config->set('client_secret', $clientSecret);
     }
     
     $config->save();
     
-    // Clear any cached tokens since config changed
-    \Drupal::cache()->delete('webform_securepay_token');
-    
-    $this->messenger()->addStatus($this->t('SecurePay configuration has been saved.'));
+    $this->messenger()->addStatus($this->t('Configuration saved.'));
     
     parent::submitForm($form, $form_state);
   }
@@ -137,82 +162,10 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
    * Test connection submit handler.
    */
   public function testConnection(array &$form, FormStateInterface $form_state): void {
-    // Handled by AJAX callback
-  }
-
-  /**
-   * AJAX callback for connection test.
-   */
-  public function testConnectionAjax(array &$form, FormStateInterface $form_state): array {
-    try {
-      $success = $this->apiService->testConnection();
-      
-      if ($success) {
-        $message = $this->t('✅ Connection successful! SecurePay API is responding.');
-        $class = 'messages--status';
-      } else {
-        $message = $this->t('❌ Connection failed. Please check your credentials.');
-        $class = 'messages--error';
-      }
-    }
-    catch (\Exception $e) {
-      $message = $this->t('❌ Connection error: @error', ['@error' => $e->getMessage()]);
-      $class = 'messages--error';
-    }
-
-    return [
-      '#type' => 'markup',
-      '#markup' => '<div class="messages ' . $class . '">' . $message . '</div>',
-      '#prefix' => '<div id="test-connection-result">',
-      '#suffix' => '</div>',
-    ];
-  }
-
-  /**
-   * Build configuration status section.
-   */
-  private function buildStatusSection(): array {
-    $isConfigured = $this->configService->isConfigured();
-    $environment = $this->configService->get(ConfigurationService::ENVIRONMENT);
-    
-    $status = [
-      '#type' => 'fieldset',
-      '#title' => $this->t('Configuration Status'),
-      '#weight' => -10,
-    ];
-
-    if ($isConfigured) {
-      $status['status'] = [
-        '#markup' => '<div class="messages messages--status">' . 
-          $this->t('✅ SecurePay is configured for @env environment.', ['@env' => $environment]) . 
-          '</div>',
-      ];
+    if ($this->apiService->testConnection()) {
+      $this->messenger()->addStatus($this->t('Connection successful!'));
     } else {
-      $status['status'] = [
-        '#markup' => '<div class="messages messages--warning">' . 
-          $this->t('⚠️ SecurePay is not fully configured. Please complete the required fields below.') . 
-          '</div>',
-      ];
-    }
-
-    return $status;
-  }
-
-  /**
-   * Validate live environment requirements.
-   */
-  private function validateLiveEnvironment(FormStateInterface $form_state): void {
-    // Check SSL requirement
-    if (empty($_SERVER['HTTPS']) && $_SERVER['SERVER_PORT'] != 443) {
-      $form_state->setErrorByName(ConfigurationService::ENVIRONMENT, 
-        $this->t('SSL/HTTPS is required when using live environment.'));
-    }
-
-    // Warn about debug mode
-    if ($form_state->getValue(ConfigurationService::DEBUG_MODE)) {
-      $this->messenger()->addWarning(
-        $this->t('Debug mode should not be enabled in live environment.')
-      );
+      $this->messenger()->addError($this->t('Connection failed. Please check your credentials.'));
     }
   }
 }
