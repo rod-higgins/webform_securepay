@@ -8,77 +8,98 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\webform_securepay\Exception\PaymentException;
 use Drupal\webform_securepay\Exception\ValidationException;
 use Drupal\webform_securepay\ValueObject\PaymentRequest;
-use Drupal\webform_securepay\ValueObject\PaymentResult;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * Consolidated payment service that handles processing, validation, logging, and notifications.
+ * Consolidated payment service handling processing, validation, logging, and notifications.
  */
 class PaymentService {
 
-  private const MIN_AMOUNT = 1;
-  private const MAX_AMOUNT = 99999999;
-  private const SUPPORTED_CURRENCIES = ['AUD', 'USD', 'EUR', 'GBP', 'NZD', 'CAD', 'JPY', 'SGD'];
-  private const SUPPORTED_CARD_TYPES = ['visa', 'mastercard', 'amex', 'diners'];
+  // Rate limiting constants
+  private const RATE_LIMIT_TABLE = 'webform_securepay_rate_limits';
+  private const DEFAULT_RATE_LIMIT = 50; // requests per hour
+  private const RATE_LIMIT_WINDOW = 3600; // 1 hour in seconds
+
+  private SecurePayApiServiceInterface $apiService;
+  private ConfigurationService $configService;
+  private Connection $database;
+  private MailManagerInterface $mailManager;
+  private AccountInterface $currentUser;
+  private LoggerInterface $logger;
 
   public function __construct(
-    private readonly SecurePayApiServiceInterface $apiService,
-    private readonly ConfigurationService $configService,
-    private readonly Connection $database,
-    private readonly MailManagerInterface $mailManager,
-    private readonly AccountInterface $currentUser,
-    private readonly LoggerInterface $logger,
-  ) {}
-
-  /**
-   * Process a complete payment transaction.
-   */
-  public function processPayment(array $data, Request $request): array {
-    try {
-      $paymentRequest = $this->buildPaymentRequest($data, $request);
-      $this->validatePaymentRequest($paymentRequest);
-      
-      $result = $this->apiService->processPayment($paymentRequest->toArray());
-      $paymentResult = PaymentResult::fromApiResponse($result);
-      
-      $this->logTransaction($paymentRequest, $paymentResult, $request);
-      $this->sendNotification($paymentResult, $this->buildNotificationContext($request));
-      
-      return $paymentResult->toArray();
-    }
-    catch (PaymentException | ValidationException $e) {
-      $this->logger->error('Payment processing failed: {message}', [
-        'message' => $e->getMessage(),
-        'ip' => $request->getClientIp(),
-      ]);
-      
-      return PaymentResult::failure($e->getMessage(), (string) $e->getCode())->toArray();
-    }
+    SecurePayApiServiceInterface $apiService,
+    ConfigurationService $configService,
+    Connection $database,
+    MailManagerInterface $mailManager,
+    AccountInterface $currentUser,
+    LoggerInterface $logger
+  ) {
+    $this->apiService = $apiService;
+    $this->configService = $configService;
+    $this->database = $database;
+    $this->mailManager = $mailManager;
+    $this->currentUser = $currentUser;
+    $this->logger = $logger;
   }
 
   /**
-   * Validate payment request against business rules.
+   * Process payment with full validation and logging.
    */
-  public function validatePaymentRequest(PaymentRequest $request): void {
-    // Amount validation
-    if ($request->amount < self::MIN_AMOUNT || $request->amount > self::MAX_AMOUNT) {
-      throw new ValidationException("Amount must be between " . self::MIN_AMOUNT . " and " . self::MAX_AMOUNT . " cents");
+  public function processPayment(array $paymentData, Request $request): array {
+    // Validate request data
+    $this->validatePaymentData($paymentData);
+    
+    // Check rate limiting
+    $ipAddress = $request->getClientIp();
+    if ($this->isRateLimited($ipAddress)) {
+      throw new PaymentException('Rate limit exceeded. Please try again later.');
     }
 
-    // Currency validation
-    if (!in_array($request->currency, self::SUPPORTED_CURRENCIES, true)) {
-      throw new ValidationException("Unsupported currency: {$request->currency}");
-    }
+    // Create payment request object
+    $paymentRequest = PaymentRequest::fromArray([
+      'token' => $paymentData['token'],
+      'amount' => (int) $paymentData['amount'],
+      'currency' => $paymentData['currency'] ?? 'AUD',
+      'merchantCode' => $paymentData['merchantCode'] ?? $this->configService->get(ConfigurationService::MERCHANT_CODE),
+      'orderId' => $paymentData['orderId'] ?? $this->generateOrderId(),
+      'ipAddress' => $ipAddress,
+      'userAgent' => $request->headers->get('User-Agent'),
+      'dccQuote' => $paymentData['dccQuote'] ?? null,
+      'threeDSResult' => $paymentData['threeDSResult'] ?? null,
+    ]);
 
-    // Token validation
-    if (empty(trim($request->token)) || strlen($request->token) < 10) {
-      throw new ValidationException("Invalid payment token");
-    }
+    // Record rate limiting attempt
+    $this->recordRateLimitAttempt($ipAddress);
 
-    // Merchant code validation
-    if (empty(trim($request->merchantCode))) {
-      throw new ValidationException("Merchant code is required");
+    try {
+      // Process payment through API
+      $result = $this->apiService->processPayment($paymentRequest->toArray());
+      
+      // Log successful transaction
+      $transactionId = $this->logTransaction($paymentRequest, $result, 'success');
+      
+      // Send success notifications
+      $this->sendPaymentNotification('success', $result, $paymentRequest);
+      
+      return [
+        'success' => true,
+        'transaction_id' => $transactionId,
+        'status' => $result['status'] ?? 'completed',
+        'amount' => $paymentRequest->getAmount(),
+        'currency' => $paymentRequest->getCurrency(),
+        'gateway_response' => $result,
+      ];
+    }
+    catch (\Exception $e) {
+      // Log failed transaction
+      $this->logTransaction($paymentRequest, ['error' => $e->getMessage()], 'failed');
+      
+      // Send failure notifications
+      $this->sendPaymentNotification('failure', ['error' => $e->getMessage()], $paymentRequest);
+      
+      throw $e;
     }
   }
 
@@ -86,162 +107,282 @@ class PaymentService {
    * Check if IP address is rate limited.
    */
   public function isRateLimited(string $ipAddress): bool {
-    if (!$this->configService->get('rate_limit_enabled')) {
+    if (!$this->configService->get(ConfigurationService::RATE_LIMIT_ENABLED)) {
       return false;
     }
 
-    if (!filter_var($ipAddress, FILTER_VALIDATE_IP)) {
-      return true; // Invalid IP, consider rate limited
-    }
+    $maxAttempts = $this->configService->get(ConfigurationService::MAX_ATTEMPTS_PER_HOUR) ?? self::DEFAULT_RATE_LIMIT;
+    $windowStart = time() - self::RATE_LIMIT_WINDOW;
 
     try {
-      $maxAttempts = $this->configService->get('max_attempts_per_hour', 50);
-      $windowStart = time() - 3600; // 1 hour
-
-      $attempts = $this->database->select('webform_securepay_transactions', 't')
+      $attemptCount = $this->database->select(self::RATE_LIMIT_TABLE, 'r')
         ->condition('ip_address', $ipAddress)
-        ->condition('created', $windowStart, '>')
+        ->condition('timestamp', $windowStart, '>')
         ->countQuery()
         ->execute()
         ->fetchField();
 
-      return $attempts >= $maxAttempts;
+      return $attemptCount >= $maxAttempts;
     }
-    catch (\Exception) {
-      return false; // Fail open on database errors
+    catch (\Exception $e) {
+      $this->logger->warning('Rate limit check failed: {message}', [
+        'message' => $e->getMessage(),
+        'ip' => $ipAddress,
+      ]);
+      return false;
     }
   }
 
   /**
-   * Get transaction statistics for reporting.
+   * Get transaction by order ID.
    */
-  public function getTransactionStats(int $days = 30): array {
+  public function getTransactionByOrderId(string $orderId): ?array {
     try {
-      $cutoff = time() - ($days * 24 * 60 * 60);
-      
-      $results = $this->database->select('webform_securepay_transactions', 't')
-        ->condition('created', $cutoff, '>')
-        ->fields('t', ['status', 'amount'])
+      $result = $this->database->select('webform_securepay_transactions', 't')
+        ->fields('t')
+        ->condition('order_id', $orderId)
         ->execute()
-        ->fetchAll();
-      
-      $stats = [
-        'total' => count($results),
-        'successful' => 0,
-        'failed' => 0,
-        'total_amount' => 0,
-      ];
-      
-      foreach ($results as $row) {
-        if ($row->status === 'paid') {
-          $stats['successful']++;
-          $stats['total_amount'] += (int) $row->amount;
-        } else {
-          $stats['failed']++;
-        }
-      }
-      
-      $stats['success_rate'] = $stats['total'] > 0 
-        ? round(($stats['successful'] / $stats['total']) * 100, 2)
-        : 0;
-      
-      return $stats;
+        ->fetchAssoc();
+
+      return $result ?: null;
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to get transaction statistics: {message}', [
+      $this->logger->error('Failed to retrieve transaction: {message}', [
         'message' => $e->getMessage(),
+        'order_id' => $orderId,
       ]);
-      return ['total' => 0, 'successful' => 0, 'failed' => 0, 'total_amount' => 0, 'success_rate' => 0];
+      return null;
     }
   }
 
-  private function buildPaymentRequest(array $data, Request $request): PaymentRequest {
-    return new PaymentRequest(
-      token: $data['token'] ?? '',
-      amount: (int) ($data['amount'] ?? 0),
-      currency: $data['currency'] ?? $this->configService->get('currency', 'AUD'),
-      merchantCode: $data['merchantCode'] ?? $this->configService->get('merchant_code', ''),
-      orderId: $this->generateOrderId(),
-      ipAddress: $request->getClientIp(),
-      userAgent: $request->headers->get('User-Agent'),
-      dccQuote: $data['dccQuote'] ?? null,
-      threeDSResult: $data['threeDSResult'] ?? null,
-    );
+  /**
+   * Get transaction statistics.
+   */
+  public function getTransactionStats(int $days = 30): array {
+    $cutoff = time() - ($days * 24 * 60 * 60);
+
+    try {
+      $query = $this->database->select('webform_securepay_transactions', 't')
+        ->condition('created', $cutoff, '>');
+
+      $total = $query->countQuery()->execute()->fetchField();
+      
+      $successful = $this->database->select('webform_securepay_transactions', 't')
+        ->condition('created', $cutoff, '>')
+        ->condition('status', 'success')
+        ->countQuery()
+        ->execute()
+        ->fetchField();
+
+      $successRate = $total > 0 ? round(($successful / $total) * 100, 2) : 0;
+
+      return [
+        'total' => (int) $total,
+        'successful' => (int) $successful,
+        'failed' => (int) ($total - $successful),
+        'success_rate' => $successRate,
+        'period_days' => $days,
+      ];
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Failed to get transaction stats: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+      
+      return [
+        'total' => 0,
+        'successful' => 0,
+        'failed' => 0,
+        'success_rate' => 0,
+        'period_days' => $days,
+      ];
+    }
   }
 
+  /**
+   * Validate payment data.
+   */
+  private function validatePaymentData(array $data): void {
+    $required = ['token', 'amount'];
+    foreach ($required as $field) {
+      if (empty($data[$field])) {
+        throw ValidationException::requiredField($field);
+      }
+    }
+
+    $amount = (int) $data['amount'];
+    if ($amount <= 0 || $amount > 99999999) {
+      throw ValidationException::invalidAmount($amount, 1, 99999999);
+    }
+
+    if (isset($data['currency'])) {
+      $supportedCurrencies = ['AUD', 'USD', 'EUR', 'GBP', 'NZD', 'CAD', 'JPY', 'SGD'];
+      if (!in_array($data['currency'], $supportedCurrencies, true)) {
+        throw ValidationException::unsupportedCurrency($data['currency'], $supportedCurrencies);
+      }
+    }
+  }
+
+  /**
+   * Generate unique order ID.
+   */
   private function generateOrderId(): string {
-    $prefix = $this->configService->get('order_id_prefix', 'WF_');
-    return $prefix . time() . '_' . substr(uniqid(), -6);
+    $prefix = $this->configService->get(ConfigurationService::ORDER_ID_PREFIX) ?? 'WF_';
+    $timestamp = time();
+    $random = substr(md5(uniqid()), 0, 8);
+    
+    return $prefix . $timestamp . '_' . $random;
   }
 
-  private function logTransaction(PaymentRequest $request, PaymentResult $result, Request $httpRequest): void {
-    if (!$this->configService->get('log_transactions')) {
+  /**
+   * Record rate limiting attempt.
+   */
+  private function recordRateLimitAttempt(string $ipAddress): void {
+    if (!$this->configService->get(ConfigurationService::RATE_LIMIT_ENABLED)) {
       return;
     }
 
     try {
-      $this->database->insert('webform_securepay_transactions')
+      $this->database->insert(self::RATE_LIMIT_TABLE)
         ->fields([
-          'order_id' => $request->orderId,
-          'transaction_id' => $result->transactionId,
-          'amount' => $request->amount,
-          'currency' => $request->currency,
-          'status' => $result->status,
-          'gateway_response_code' => $result->gatewayResponseCode,
-          'gateway_response_message' => $result->gatewayResponseMessage,
-          'ip_address' => $request->ipAddress,
-          'user_agent' => substr($httpRequest->headers->get('User-Agent', ''), 0, 500),
-          'raw_response' => $result->rawResponse ? json_encode($result->rawResponse) : null,
-          'created' => time(),
-          'updated' => time(),
+          'ip_address' => $ipAddress,
+          'timestamp' => time(),
+          'user_id' => $this->currentUser->id(),
         ])
         ->execute();
+
+      // Clean up old rate limit records
+      $this->cleanupRateLimitRecords();
+    }
+    catch (\Exception $e) {
+      $this->logger->warning('Failed to record rate limit attempt: {message}', [
+        'message' => $e->getMessage(),
+        'ip' => $ipAddress,
+      ]);
+    }
+  }
+
+  /**
+   * Log transaction to database.
+   */
+  private function logTransaction(PaymentRequest $request, array $result, string $status): ?string {
+    if (!$this->configService->get(ConfigurationService::LOG_TRANSACTIONS)) {
+      return null;
+    }
+
+    try {
+      $transactionId = $this->database->insert('webform_securepay_transactions')
+        ->fields([
+          'order_id' => $request->getOrderId(),
+          'transaction_id' => $result['transactionId'] ?? null,
+          'amount' => $request->getAmount(),
+          'currency' => $request->getCurrency(),
+          'status' => $status,
+          'gateway_response_code' => $result['responseCode'] ?? null,
+          'gateway_response_message' => $result['responseMessage'] ?? null,
+          'ip_address' => $request->getIpAddress(),
+          'user_agent' => $request->getUserAgent(),
+          'created' => time(),
+          'updated' => time(),
+          'merchant_code' => $request->getMerchantCode(),
+          'response_data' => json_encode($result),
+        ])
+        ->execute();
+
+      return (string) $transactionId;
     }
     catch (\Exception $e) {
       $this->logger->error('Failed to log transaction: {message}', [
         'message' => $e->getMessage(),
-        'order_id' => $request->orderId,
+        'order_id' => $request->getOrderId(),
       ]);
+      return null;
     }
   }
 
-  private function sendNotification(PaymentResult $result, array $context): void {
-    if (!$this->configService->get('email_notifications')) {
+  /**
+   * Send payment notification emails.
+   */
+  private function sendPaymentNotification(string $type, array $result, PaymentRequest $request): void {
+    if (!$this->configService->get(ConfigurationService::EMAIL_NOTIFICATIONS)) {
       return;
     }
 
-    $email = $this->configService->get('notification_email');
-    if (empty($email)) {
+    $notificationEmail = $this->configService->get(ConfigurationService::NOTIFICATION_EMAIL);
+    if (empty($notificationEmail)) {
       return;
     }
 
     try {
-      $key = $result->success ? 'payment_success' : 'payment_failure';
-      $subject = $result->success 
-        ? "Payment Successful - {$result->transactionId}"
-        : "Payment Failed - {$result->orderId}";
-
-      $params = [
-        'subject' => $subject,
-        'result' => $result,
-        'context' => $context,
-      ];
-
-      $this->mailManager->mail('webform_securepay', $key, $email, 'en', $params);
+      $mailKey = $type === 'success' ? 'payment_success' : 'payment_failure';
+      
+      $this->mailManager->mail(
+        'webform_securepay',
+        $mailKey,
+        $notificationEmail,
+        'en',
+        [
+          'result' => $result,
+          'request' => $request,
+          'subject' => $this->getNotificationSubject($type, $request),
+          'body' => $this->getNotificationBody($type, $result, $request),
+        ]
+      );
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to send notification: {message}', [
+      $this->logger->warning('Failed to send payment notification: {message}', [
         'message' => $e->getMessage(),
-        'transaction_id' => $result->transactionId,
+        'type' => $type,
+        'order_id' => $request->getOrderId(),
       ]);
     }
   }
 
-  private function buildNotificationContext(Request $request): array {
-    return [
-      'ip_address' => $request->getClientIp(),
-      'user_agent' => $request->headers->get('User-Agent'),
-      'timestamp' => time(),
+  /**
+   * Clean up old rate limit records.
+   */
+  private function cleanupRateLimitRecords(): void {
+    try {
+      $cutoff = time() - (self::RATE_LIMIT_WINDOW * 2); // Keep 2x window for safety
+      
+      $this->database->delete(self::RATE_LIMIT_TABLE)
+        ->condition('timestamp', $cutoff, '<')
+        ->execute();
+    }
+    catch (\Exception $e) {
+      $this->logger->warning('Failed to cleanup rate limit records: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+    }
+  }
+
+  /**
+   * Get notification email subject.
+   */
+  private function getNotificationSubject(string $type, PaymentRequest $request): string {
+    return $type === 'success' 
+      ? "Payment Successful - {$request->getOrderId()}"
+      : "Payment Failed - {$request->getOrderId()}";
+  }
+
+  /**
+   * Get notification email body.
+   */
+  private function getNotificationBody(string $type, array $result, PaymentRequest $request): array {
+    $body = [
+      "Payment {$type} notification:",
+      '',
+      "Order ID: {$request->getOrderId()}",
+      "Amount: {$request->getFormattedAmount()}",
+      "Time: " . date('Y-m-d H:i:s'),
     ];
+
+    if ($type === 'success') {
+      $body[] = "Transaction ID: " . ($result['transactionId'] ?? 'N/A');
+    } else {
+      $body[] = "Error: " . ($result['error'] ?? 'Unknown error');
+    }
+
+    return $body;
   }
 }

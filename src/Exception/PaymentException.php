@@ -3,42 +3,160 @@
 namespace Drupal\webform_securepay\Exception;
 
 /**
- * Base exception for payment processing errors.
+ * Base exception class for payment-related errors.
  */
 class PaymentException extends \Exception {
 
-  /**
-   * Creates a payment exception for invalid amounts.
-   */
-  public static function invalidAmount(int $amount): self {
-    return new self("Invalid payment amount: {$amount} cents");
+  private ?string $errorCode;
+  private ?array $context;
+
+  public function __construct(
+    string $message = '',
+    int $code = 0,
+    ?\Throwable $previous = null,
+    ?string $errorCode = null,
+    ?array $context = null
+  ) {
+    parent::__construct($message, $code, $previous);
+    $this->errorCode = $errorCode;
+    $this->context = $context ?? [];
   }
 
   /**
-   * Creates a payment exception for missing tokens.
+   * Get the error code.
    */
-  public static function missingToken(): self {
-    return new self('Payment token is required');
+  public function getErrorCode(): ?string {
+    return $this->errorCode;
   }
 
   /**
-   * Creates a payment exception for API failures.
+   * Get the error context.
    */
-  public static function apiFailure(string $message, int $code = 0, ?\Throwable $previous = null): self {
-    return new self("API error: {$message}", $code, $previous);
+  public function getContext(): array {
+    return $this->context;
   }
 
   /**
-   * Creates a payment exception for rate limiting.
+   * Check if this is a user-facing error.
    */
-  public static function rateLimitExceeded(): self {
-    return new self('Rate limit exceeded. Please try again later.');
+  public function isUserFacing(): bool {
+    return in_array(get_class($this), [
+      ValidationException::class,
+      ConfigurationException::class,
+    ]);
   }
 
   /**
-   * Creates a payment exception for configuration issues.
+   * Get user-friendly error message.
    */
-  public static function configurationError(string $field): self {
-    return new self("Configuration error: {$field} is required");
+  public function getUserMessage(): string {
+    return $this->isUserFacing() 
+      ? $this->getMessage()
+      : 'An error occurred while processing your payment. Please try again.';
+  }
+
+  /**
+   * Convert to array for API responses.
+   */
+  public function toArray(): array {
+    return [
+      'error' => true,
+      'error_code' => $this->errorCode,
+      'message' => $this->getUserMessage(),
+      'context' => $this->context,
+      'timestamp' => time(),
+    ];
+  }
+
+  /**
+   * Create a generic payment error.
+   */
+  public static function generic(string $message, ?string $errorCode = null): self {
+    return new self($message, 0, null, $errorCode);
+  }
+
+  /**
+   * Create a payment processing error.
+   */
+  public static function processingFailed(string $reason, ?array $context = null): self {
+    return new self(
+      "Payment processing failed: {$reason}",
+      0,
+      null,
+      'PROCESSING_FAILED',
+      $context
+    );
+  }
+
+  /**
+   * Create a network/connectivity error.
+   */
+  public static function networkError(string $details): self {
+    return new self(
+      "Network error occurred: {$details}",
+      0,
+      null,
+      'NETWORK_ERROR'
+    );
+  }
+
+  /**
+   * Create a timeout error.
+   */
+  public static function timeout(int $timeoutSeconds): self {
+    return new self(
+      "Payment request timed out after {$timeoutSeconds} seconds",
+      0,
+      null,
+      'TIMEOUT'
+    );
+  }
+
+  /**
+   * Create an insufficient funds error.
+   */
+  public static function insufficientFunds(): self {
+    return new self(
+      'Insufficient funds available for this transaction',
+      0,
+      null,
+      'INSUFFICIENT_FUNDS'
+    );
+  }
+
+  /**
+   * Create a card declined error.
+   */
+  public static function cardDeclined(string $reason = 'Unknown'): self {
+    return new self(
+      "Payment card was declined: {$reason}",
+      0,
+      null,
+      'CARD_DECLINED'
+    );
+  }
+
+  /**
+   * Create a fraud detection error.
+   */
+  public static function fraudDetected(string $reason): self {
+    return new self(
+      "Transaction blocked by fraud detection: {$reason}",
+      0,
+      null,
+      'FRAUD_DETECTED'
+    );
+  }
+
+  /**
+   * Create a system maintenance error.
+   */
+  public static function systemMaintenance(): self {
+    return new self(
+      'Payment system is currently under maintenance. Please try again later.',
+      0,
+      null,
+      'SYSTEM_MAINTENANCE'
+    );
   }
 }

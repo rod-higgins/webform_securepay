@@ -8,6 +8,13 @@ namespace Drupal\webform_securepay\Exception;
 class ConfigurationException extends PaymentException {
 
   /**
+   * Creates a configuration exception for missing configuration.
+   */
+  public static function missingConfiguration(): self {
+    return new self('SecurePay is not properly configured. Please check Client ID, Client Secret, and Merchant Code.');
+  }
+
+  /**
    * Creates a configuration exception for missing client ID.
    */
   public static function missingClientId(): self {

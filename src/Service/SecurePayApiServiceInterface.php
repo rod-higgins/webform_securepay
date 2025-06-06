@@ -8,18 +8,17 @@ namespace Drupal\webform_securepay\Service;
 interface SecurePayApiServiceInterface {
 
   /**
-   * Process a payment through SecurePay REST API.
+   * Process a payment transaction.
    *
    * @param array $payment_data
-   *   The payment data array.
+   *   Payment data including token, amount, currency, etc.
    * @param array $element_settings
-   *   Optional element-specific settings.
+   *   Additional element settings.
    *
    * @return array
-   *   Payment result array with success status and transaction details.
+   *   Payment result data.
    *
-   * @throws \Exception
-   *   When payment processing fails.
+   * @throws \Drupal\webform_securepay\Exception\ApiException
    */
   public function processPayment(array $payment_data, array $element_settings = []): array;
 
@@ -29,52 +28,51 @@ interface SecurePayApiServiceInterface {
    * @param int $amount
    *   Payment amount in cents.
    * @param string $order_type
-   *   Order type (DYNAMIC_CURRENCY_CONVERSION, THREED_SECURE, etc.).
+   *   Order type (e.g., 'DYNAMIC_CURRENCY_CONVERSION', 'THREED_SECURE').
    * @param string|null $order_reference
    *   Optional order reference.
    *
    * @return array|false
-   *   Order data or FALSE on failure.
+   *   Order data or false on failure.
    */
-  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = NULL);
+  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = null): array|false;
 
   /**
-   * Refund a payment.
+   * Process a refund for a transaction.
    *
    * @param string $order_id
-   *   The order ID to refund.
+   *   The original order ID.
    * @param int $amount
    *   Refund amount in cents.
    * @param string|null $merchant_code
    *   Optional merchant code override.
    *
    * @return array|false
-   *   Refund result or FALSE on failure.
+   *   Refund result or false on failure.
    */
-  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = NULL);
+  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = null): array|false;
 
   /**
    * Test connection to SecurePay API.
    *
    * @return bool
-   *   TRUE if connection successful, FALSE otherwise.
+   *   True if connection is successful.
    */
   public function testConnection(): bool;
 
   /**
-   * Get the SecurePay UI JavaScript SDK URL.
+   * Get the URL for the SecurePay UI SDK.
    *
    * @return string
-   *   The SDK URL for the current environment.
+   *   SDK URL based on environment.
    */
   public function getUiSdkUrl(): string;
 
   /**
-   * Get the 3DS2 JavaScript SDK URL.
+   * Get the URL for the 3D Secure 2 SDK.
    *
    * @return string
-   *   The 3DS2 SDK URL for the current environment.
+   *   3DS2 SDK URL based on environment.
    */
   public function getThreeDS2SdkUrl(): string;
-
 }

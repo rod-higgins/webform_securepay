@@ -5,63 +5,91 @@ namespace Drupal\webform_securepay\Form;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\webform_securepay\Service\ConfigurationService;
-use Drupal\webform_securepay\Service\FormHelperService;
+use Drupal\webform_securepay\Service\FormBuilderService;
 use Drupal\webform_securepay\Service\SecurePayApiServiceInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
- * Simplified SecurePay settings form using helper services.
+ * Configuration form for SecurePay settings.
  */
 class WebformSecurePaySettingsForm extends ConfigFormBase {
 
   public function __construct(
     private readonly ConfigurationService $configService,
-    private readonly FormHelperService $formHelper,
+    private readonly FormBuilderService $formBuilder,
     private readonly SecurePayApiServiceInterface $apiService,
   ) {
     parent::__construct(\Drupal::configFactory());
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('webform_securepay.configuration'),
-      $container->get('webform_securepay.form_helper'),
+      $container->get('webform_securepay.form_builder'),
       $container->get('webform_securepay.api')
     );
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function getFormId(): string {
     return 'webform_securepay_admin_settings';
   }
 
+  /**
+   * {@inheritdoc}
+   */
   protected function getEditableConfigNames(): array {
     return [ConfigurationService::CONFIG_NAME];
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function buildForm(array $form, FormStateInterface $form_state): array {
     $form['#tree'] = false;
 
-    $form['authentication'] = $this->formHelper->buildAuthenticationSection();
-    $form['payment'] = $this->formHelper->buildPaymentSection();
-    $form['features'] = $this->formHelper->buildFeaturesSection();
-    $form['advanced'] = $this->formHelper->buildAdvancedSection();
-    $form['test'] = $this->formHelper->buildTestSection();
+    // Add configuration status
+    $form['status'] = $this->buildStatusSection();
+
+    // Build form sections using FormBuilderService
+    $form['authentication'] = $this->formBuilder->buildAuthenticationSection();
+    $form['payment'] = $this->formBuilder->buildPaymentSection();
+    $form['features'] = $this->formBuilder->buildFeaturesSection();
+    $form['advanced'] = $this->formBuilder->buildAdvancedSection();
+    $form['test'] = $this->formBuilder->buildTestSection();
 
     return parent::buildForm($form, $form_state);
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     parent::validateForm($form, $form_state);
 
-    $errors = $this->formHelper->validateFormValues($form_state->getValues());
+    $errors = $this->formBuilder->validateFormValues($form_state->getValues());
     
     foreach ($errors as $field => $message) {
       $form_state->setErrorByName($field, $message);
     }
+
+    // Additional validation for live environment
+    $environment = $form_state->getValue(ConfigurationService::ENVIRONMENT);
+    if ($environment === 'live') {
+      $this->validateLiveEnvironment($form_state);
+    }
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
-    $values = $this->formHelper->processSubmissionValues($form_state->getValues());
+    $values = $this->formBuilder->processSubmissionValues($form_state->getValues());
     
     $config = $this->config(ConfigurationService::CONFIG_NAME);
     
@@ -79,6 +107,8 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       ConfigurationService::TIMEOUT,
       ConfigurationService::LOG_TRANSACTIONS,
       ConfigurationService::DEBUG_MODE,
+      ConfigurationService::RATE_LIMIT_ENABLED,
+      ConfigurationService::MAX_ATTEMPTS_PER_HOUR,
     ];
 
     foreach ($configKeys as $key) {
@@ -95,23 +125,38 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
     
     $config->save();
     
+    // Clear any cached tokens since config changed
+    \Drupal::cache()->delete('webform_securepay_token');
+    
+    $this->messenger()->addStatus($this->t('SecurePay configuration has been saved.'));
+    
     parent::submitForm($form, $form_state);
   }
 
+  /**
+   * Test connection submit handler.
+   */
   public function testConnection(array &$form, FormStateInterface $form_state): void {
     // Handled by AJAX callback
   }
 
+  /**
+   * AJAX callback for connection test.
+   */
   public function testConnectionAjax(array &$form, FormStateInterface $form_state): array {
     try {
       $success = $this->apiService->testConnection();
-      $message = $success 
-        ? $this->t('✅ Connection successful!')
-        : $this->t('❌ Connection failed.');
-      $class = $success ? 'messages--status' : 'messages--error';
+      
+      if ($success) {
+        $message = $this->t('✅ Connection successful! SecurePay API is responding.');
+        $class = 'messages--status';
+      } else {
+        $message = $this->t('❌ Connection failed. Please check your credentials.');
+        $class = 'messages--error';
+      }
     }
     catch (\Exception $e) {
-      $message = $this->t('❌ Connection failed: @error', ['@error' => $e->getMessage()]);
+      $message = $this->t('❌ Connection error: @error', ['@error' => $e->getMessage()]);
       $class = 'messages--error';
     }
 
@@ -121,5 +166,53 @@ class WebformSecurePaySettingsForm extends ConfigFormBase {
       '#prefix' => '<div id="test-connection-result">',
       '#suffix' => '</div>',
     ];
+  }
+
+  /**
+   * Build configuration status section.
+   */
+  private function buildStatusSection(): array {
+    $isConfigured = $this->configService->isConfigured();
+    $environment = $this->configService->get(ConfigurationService::ENVIRONMENT);
+    
+    $status = [
+      '#type' => 'fieldset',
+      '#title' => $this->t('Configuration Status'),
+      '#weight' => -10,
+    ];
+
+    if ($isConfigured) {
+      $status['status'] = [
+        '#markup' => '<div class="messages messages--status">' . 
+          $this->t('✅ SecurePay is configured for @env environment.', ['@env' => $environment]) . 
+          '</div>',
+      ];
+    } else {
+      $status['status'] = [
+        '#markup' => '<div class="messages messages--warning">' . 
+          $this->t('⚠️ SecurePay is not fully configured. Please complete the required fields below.') . 
+          '</div>',
+      ];
+    }
+
+    return $status;
+  }
+
+  /**
+   * Validate live environment requirements.
+   */
+  private function validateLiveEnvironment(FormStateInterface $form_state): void {
+    // Check SSL requirement
+    if (empty($_SERVER['HTTPS']) && $_SERVER['SERVER_PORT'] != 443) {
+      $form_state->setErrorByName(ConfigurationService::ENVIRONMENT, 
+        $this->t('SSL/HTTPS is required when using live environment.'));
+    }
+
+    // Warn about debug mode
+    if ($form_state->getValue(ConfigurationService::DEBUG_MODE)) {
+      $this->messenger()->addWarning(
+        $this->t('Debug mode should not be enabled in live environment.')
+      );
+    }
   }
 }

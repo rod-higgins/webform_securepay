@@ -12,7 +12,7 @@ services:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
 
-  # Consolidated payment service (combines processor, validator, logger, notifications)
+  # Consolidated payment service (handles processing, validation, logging, notifications)
   webform_securepay.payment_service:
     class: Drupal\webform_securepay\Service\PaymentService
     arguments:
@@ -30,7 +30,7 @@ services:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
 
-  # Form builder service (combines element builder and form helper)
+  # Consolidated form builder service (combines element builder and form helper)
   webform_securepay.form_builder:
     class: Drupal\webform_securepay\Service\FormBuilderService
     arguments:

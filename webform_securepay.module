@@ -2,7 +2,7 @@
 
 /**
  * @file
- * Contains the webform_securepay module hooks and functions.
+ * SecurePay integration for Drupal Webforms.
  */
 
 use Drupal\Core\Form\FormStateInterface;
@@ -18,7 +18,7 @@ function webform_securepay_help($route_name, RouteMatchInterface $route_match) {
       return _webform_securepay_help_page();
       
     case 'webform_securepay.admin_settings':
-      return '<p>' . t('Configure SecurePay payment processing settings for Drupal Webforms.') . '</p>';
+      return '<p>' . t('Configure SecurePay payment processing settings for Drupal Webforms using the modern REST API with OAuth 2.0 authentication.') . '</p>';
   }
 }
 
@@ -44,8 +44,24 @@ function webform_securepay_theme() {
         'gateway_response_code' => NULL,
         'gateway_response_message' => NULL,
         'created_at' => NULL,
+        'dcc_quote' => NULL,
+        'three_ds_result' => NULL,
       ],
       'template' => 'webform-securepay-result',
+    ],
+    'webform_securepay_header' => [
+      'variables' => [
+        'title' => NULL,
+        'environment' => 'sandbox',
+        'features' => [],
+      ],
+      'template' => 'securepay-header',
+    ],
+    'webform_securepay_footer' => [
+      'variables' => [
+        'environment' => 'sandbox',
+      ],
+      'template' => 'securepay-footer',
     ],
   ];
 }
@@ -59,8 +75,12 @@ function webform_securepay_mail($key, &$message, $params) {
       _webform_securepay_build_success_mail($message, $params);
       break;
       
-    case 'payment_failed':
+    case 'payment_failure':
       _webform_securepay_build_failure_mail($message, $params);
+      break;
+
+    case 'payment_alert':
+      _webform_securepay_build_alert_mail($message, $params);
       break;
   }
 }
@@ -93,12 +113,12 @@ function webform_securepay_webform_submission_presave(WebformSubmissionInterface
  * Implements hook_cron().
  */
 function webform_securepay_cron() {
-  $config_service = \Drupal::service('webform_securepay.configuration');
+  $configService = \Drupal::service('webform_securepay.configuration');
   
-  // Clean up old transaction logs
-  $retention_days = $config_service->get('data_retention_days');
-  if ($retention_days && $retention_days > 0) {
-    _webform_securepay_cleanup_old_transactions($retention_days);
+  // Clean up old transaction logs based on retention policy
+  $retentionDays = $configService->get('data_retention_days');
+  if ($retentionDays && $retentionDays > 0) {
+    _webform_securepay_cleanup_old_transactions($retentionDays);
   }
 }
 
@@ -106,8 +126,8 @@ function webform_securepay_cron() {
  * Implements hook_form_alter().
  */
 function webform_securepay_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  // Add rate limiting validation to webforms
   if (strpos($form_id, 'webform_') === 0) {
-    // Add rate limiting validation
     $form['#validate'][] = '_webform_securepay_validate_rate_limit';
   }
 }
@@ -124,10 +144,12 @@ function _webform_securepay_help_page(): string {
     t('Modern SecurePay REST API integration with OAuth 2.0'),
     t('Dynamic Currency Conversion (DCC) support'),
     t('3D Secure 2 authentication'),
-    t('FraudGuard fraud detection'),
+    t('Advanced fraud detection (FraudGuard)'),
     t('Comprehensive transaction logging'),
-    t('Webhook support for real-time notifications'),
+    t('Real-time webhook notifications'),
     t('Customizable UI styling'),
+    t('Rate limiting protection'),
+    t('PCI DSS compliant implementation'),
   ];
   
   $output .= '<ul><li>' . implode('</li><li>', $features) . '</li></ul>';
@@ -136,6 +158,9 @@ function _webform_securepay_help_page(): string {
   $output .= '<p>' . t('Configure the module at <a href="@url">SecurePay Settings</a>.', [
     '@url' => \Drupal::url('webform_securepay.admin_settings'),
   ]) . '</p>';
+  
+  $output .= '<h3>' . t('Usage') . '</h3>';
+  $output .= '<p>' . t('Add SecurePay elements to your webforms through the form builder interface. Each element can be customized with different payment amounts, currencies, and features.') . '</p>';
   
   return $output;
 }
@@ -146,19 +171,20 @@ function _webform_securepay_help_page(): string {
 function _webform_securepay_build_success_mail(&$message, $params): void {
   $result = $params['result'];
   
-  $message['subject'] = t('Payment Successful - Transaction @id', [
-    '@id' => $result['transaction_id'] ?? 'Unknown',
+  $message['subject'] = $params['subject'] ?? t('Payment Successful - Transaction @id', [
+    '@id' => $result->transactionId ?? 'Unknown',
   ]);
   
-  $message['body'][] = t('A payment has been successfully processed through SecurePay.');
-  $message['body'][] = '';
-  $message['body'][] = t('Transaction Details:');
-  $message['body'][] = t('- Transaction ID: @id', ['@id' => $result['transaction_id'] ?? 'N/A']);
-  $message['body'][] = t('- Amount: @amount @currency', [
-    '@amount' => number_format(($result['amount'] ?? 0) / 100, 2),
-    '@currency' => $result['currency'] ?? 'AUD',
-  ]);
-  $message['body'][] = t('- Status: @status', ['@status' => $result['status'] ?? 'Unknown']);
+  $message['body'] = $params['body'] ?? [
+    t('A payment has been successfully processed through SecurePay.'),
+    '',
+    t('Transaction Details:'),
+    t('- Transaction ID: @id', ['@id' => $result->transactionId ?? 'N/A']),
+    t('- Amount: @amount', ['@amount' => $result->getFormattedAmount()]),
+    t('- Status: @status', ['@status' => $result->getStatusLabel()]),
+    '',
+    t('Processed at: @time', ['@time' => date('Y-m-d H:i:s')]),
+  ];
 }
 
 /**
@@ -167,15 +193,28 @@ function _webform_securepay_build_success_mail(&$message, $params): void {
 function _webform_securepay_build_failure_mail(&$message, $params): void {
   $result = $params['result'];
   
-  $message['subject'] = t('Payment Failed - Order @id', [
-    '@id' => $result['transaction_id'] ?? 'Unknown',
+  $message['subject'] = $params['subject'] ?? t('Payment Failed - Order @id', [
+    '@id' => $result->transactionId ?? 'Unknown',
   ]);
   
-  $message['body'][] = t('A payment attempt has failed through SecurePay.');
-  $message['body'][] = '';
-  $message['body'][] = t('Error Details:');
-  $message['body'][] = t('- Error: @error', ['@error' => $result['error'] ?? 'Unknown error']);
-  $message['body'][] = t('- Order ID: @id', ['@id' => $result['transaction_id'] ?? 'N/A']);
+  $message['body'] = $params['body'] ?? [
+    t('A payment attempt has failed through SecurePay.'),
+    '',
+    t('Error Details:'),
+    t('- Error: @error', ['@error' => $result->error ?? 'Unknown error']),
+    t('- Order ID: @id', ['@id' => $result->transactionId ?? 'N/A']),
+    t('- Amount: @amount', ['@amount' => $result->getFormattedAmount()]),
+    '',
+    t('Failed at: @time', ['@time' => date('Y-m-d H:i:s')]),
+  ];
+}
+
+/**
+ * Build alert email message.
+ */
+function _webform_securepay_build_alert_mail(&$message, $params): void {
+  $message['subject'] = $params['subject'];
+  $message['body'] = $params['body'];
 }
 
 /**
@@ -184,7 +223,8 @@ function _webform_securepay_build_failure_mail(&$message, $params): void {
 function _webform_securepay_is_successful_payment($payment_data): bool {
   return !empty($payment_data) && 
          is_array($payment_data) && 
-         ($payment_data['status'] ?? '') === 'paid';
+         ($payment_data['status'] ?? '') === 'paid' &&
+         !empty($payment_data['transaction_id']);
 }
 
 /**
@@ -206,6 +246,11 @@ function _webform_securepay_log_submission_association(WebformSubmissionInterfac
       ])
       ->condition('order_id', $payment_data['transaction_id'])
       ->execute();
+      
+    \Drupal::logger('webform_securepay')->info('Linked submission @sid to transaction @tid', [
+      '@sid' => $submission->id(),
+      '@tid' => $payment_data['transaction_id'],
+    ]);
   }
   catch (\Exception $e) {
     \Drupal::logger('webform_securepay')->error('Failed to log submission association: @message', [
@@ -215,7 +260,7 @@ function _webform_securepay_log_submission_association(WebformSubmissionInterfac
 }
 
 /**
- * Clean up old transaction records.
+ * Clean up old transaction records based on retention policy.
  */
 function _webform_securepay_cleanup_old_transactions(int $retention_days): void {
   $cutoff = \Drupal::time()->getRequestTime() - ($retention_days * 24 * 60 * 60);
@@ -227,12 +272,21 @@ function _webform_securepay_cleanup_old_transactions(int $retention_days): void 
       'webform_securepay_webhooks',
     ];
     
+    $totalDeleted = 0;
     foreach ($tables as $table) {
       if ($database->schema()->tableExists($table)) {
-        $database->delete($table)
+        $deleted = $database->delete($table)
           ->condition('created', $cutoff, '<')
           ->execute();
+        $totalDeleted += $deleted;
       }
+    }
+    
+    if ($totalDeleted > 0) {
+      \Drupal::logger('webform_securepay')->info('Cleaned up @count old transaction records older than @days days', [
+        '@count' => $totalDeleted,
+        '@days' => $retention_days,
+      ]);
     }
   }
   catch (\Exception $e) {
@@ -243,49 +297,13 @@ function _webform_securepay_cleanup_old_transactions(int $retention_days): void 
 }
 
 /**
- * Validate rate limiting.
+ * Validate rate limiting for payment requests.
  */
 function _webform_securepay_validate_rate_limit(array &$form, FormStateInterface $form_state): void {
-  $config_service = \Drupal::service('webform_securepay.configuration');
+  $paymentService = \Drupal::service('webform_securepay.payment_service');
+  $ipAddress = \Drupal::request()->getClientIp();
   
-  if (!$config_service->get('rate_limit_enabled')) {
-    return;
-  }
-  
-  $max_attempts = $config_service->get('max_attempts_per_hour', 50);
-  $ip_address = \Drupal::request()->getClientIp();
-  
-  if (_webform_securepay_check_rate_limit($ip_address, $max_attempts)) {
-    $form_state->setErrorByName('', t('Too many payment attempts. Please try again later.'));
-  }
-}
-
-/**
- * Check rate limiting for IP address.
- */
-function _webform_securepay_check_rate_limit(string $ip_address, int $max_attempts): bool {
-  $database = \Drupal::database();
-  
-  if (!$database->schema()->tableExists('webform_securepay_transactions')) {
-    return FALSE;
-  }
-  
-  $one_hour_ago = \Drupal::time()->getRequestTime() - 3600;
-  
-  try {
-    $attempts = $database->select('webform_securepay_transactions', 't')
-      ->condition('ip_address', $ip_address)
-      ->condition('created', $one_hour_ago, '>')
-      ->countQuery()
-      ->execute()
-      ->fetchField();
-    
-    return $attempts >= $max_attempts;
-  }
-  catch (\Exception $e) {
-    \Drupal::logger('webform_securepay')->error('Rate limit check failed: @message', [
-      '@message' => $e->getMessage(),
-    ]);
-    return FALSE;
+  if ($paymentService->isRateLimited($ipAddress)) {
+    $form_state->setErrorByName('', t('Too many payment attempts from your IP address. Please try again later.'));
   }
 }
