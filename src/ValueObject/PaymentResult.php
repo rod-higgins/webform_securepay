@@ -4,8 +4,10 @@ namespace Drupal\webform_securepay\ValueObject;
 
 /**
  * Payment result value object.
+ * 
+ * This is an immutable value object - properties should not be modified after creation.
  */
-readonly class PaymentResult {
+class PaymentResult {
 
   public function __construct(
     public bool $success,
