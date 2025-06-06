@@ -53,7 +53,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
         'token' => $this->sanitizeToken($payment_data['token'] ?? ''),
         'amount' => (int) ($payment_data['amount'] ?? 0),
         'currency' => $this->sanitizeCurrency($payment_data['currency'] ?? $this->config->get('currency') ?? ConfigurationService::CURRENCY_AUD),
-        'merchantCode' => $this->config->get('merchant_code'),
+        'merchantCode' => $this->config->getMerchantCode(),
         'orderId' => $payment_data['orderId'] ?? $this->generateOrderId(),
         'ipAddress' => $this->sanitizeIpAddress($payment_data['ipAddress'] ?? null),
       ]);
@@ -105,7 +105,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       $data = [
         'amount' => max(1, $amount),
         'orderType' => $order_type,
-        'merchantCode' => $this->config->get('merchant_code'),
+        'merchantCode' => $this->config->getMerchantCode(),
       ];
 
       if ($order_reference !== null) {
@@ -141,7 +141,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       $data = [
         'orderId' => $this->sanitizeOrderId($order_id),
         'amount' => max(1, $amount),
-        'merchantCode' => $merchant_code ?? $this->config->get('merchant_code'),
+        'merchantCode' => $merchant_code ?? $this->config->getMerchantCode(),
       ];
 
       $response = $this->makeApiRequest('POST', self::ENDPOINT_REFUNDS, $data);
@@ -209,11 +209,11 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
 
     $endpoints = $this->config->getApiEndpoints();
-    $clientId = $this->config->get('client_id');
-    $clientSecret = $this->config->get('client_secret');
+    $clientId = $this->config->getClientId();
+    $clientSecret = $this->config->getClientSecret();
 
     if (empty($clientId) || empty($clientSecret)) {
-      throw ConfigurationException::missingClientId();
+      throw ConfigurationException::missingConfiguration();
     }
 
     try {

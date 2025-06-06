@@ -6,14 +6,29 @@ webform_securepay.settings:
       type: string
       label: 'OAuth Client ID'
       translatable: false
+    client_id_key:
+      type: string
+      label: 'OAuth Client ID Key'
+      translatable: false
     client_secret:
       type: string
       label: 'OAuth Client Secret'
+      translatable: false
+    client_secret_key:
+      type: string
+      label: 'OAuth Client Secret Key'
       translatable: false
     merchant_code:
       type: string
       label: 'Merchant Code'
       translatable: false
+    merchant_code_key:
+      type: string
+      label: 'Merchant Code Key'
+      translatable: false
+    use_key_module:
+      type: boolean
+      label: 'Use Key module for credential storage'
     environment:
       type: string
       label: 'Environment'

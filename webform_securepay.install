@@ -19,6 +19,7 @@ function webform_securepay_install(): void {
          ->set('currency', ConfigurationService::CURRENCY_AUD)
          ->set('dcc_enabled', FALSE)
          ->set('three_ds_enabled', FALSE)
+         ->set('use_key_module', FALSE)
          ->save();
 
   \Drupal::messenger()->addMessage(t('SecurePay module installed successfully. <a href="@url">Configure settings</a> to start accepting payments.', [
@@ -40,6 +41,39 @@ function webform_securepay_uninstall(): void {
   
   // Clear caches
   drupal_flush_all_caches();
+}
+
+/**
+ * Add Key module integration configuration.
+ */
+function webform_securepay_update_10001(): void {
+  $config = \Drupal::configFactory()->getEditable(ConfigurationService::CONFIG_NAME);
+  
+  // Add new Key module configuration fields
+  if (!$config->get('use_key_module')) {
+    $config->set('use_key_module', FALSE);
+  }
+  
+  // Initialize key reference fields if they don't exist
+  $keyFields = ['client_id_key', 'client_secret_key', 'merchant_code_key'];
+  foreach ($keyFields as $field) {
+    if (!$config->get($field)) {
+      $config->set($field, '');
+    }
+  }
+  
+  $config->save();
+  
+  $messenger = \Drupal::messenger();
+  $keyModuleEnabled = \Drupal::moduleHandler()->moduleExists('key');
+  
+  if ($keyModuleEnabled) {
+    $messenger->addStatus(t('Key module integration has been added to SecurePay configuration. You can now use the Key module for secure credential storage.'));
+  } else {
+    $messenger->addWarning(t('Key module integration has been added to SecurePay configuration. Consider installing the <a href="@url" target="_blank">Key module</a> for enhanced security.', [
+      '@url' => 'https://www.drupal.org/project/key',
+    ]));
+  }
 }
 
 /**
@@ -146,13 +180,44 @@ function webform_securepay_requirements($phase): array {
       ];
     } else {
       $environment = $config->get('environment');
+      $usingKeyModule = $configService->isUsingKeyModule();
       $requirements['webform_securepay_config'] = [
         'title' => t('SecurePay Configuration'),
-        'value' => t('Configured (@env)', [
+        'value' => t('Configured (@env)@key', [
           '@env' => $environment === ConfigurationService::ENVIRONMENT_LIVE ? 'Live' : 'Sandbox',
+          '@key' => $usingKeyModule ? ' - Using Key module' : '',
         ]),
         'severity' => REQUIREMENT_OK,
         'description' => t('SecurePay is properly configured and ready to process payments.'),
+      ];
+    }
+
+    // Check Key module status
+    $keyModuleAvailable = $configService->isKeyModuleAvailable();
+    $useKeyModule = $config->get('use_key_module', false);
+    
+    if ($useKeyModule && !$keyModuleAvailable) {
+      $requirements['webform_securepay_key_module'] = [
+        'title' => t('SecurePay Key Module'),
+        'value' => t('Key module not available'),
+        'severity' => REQUIREMENT_ERROR,
+        'description' => t('Configuration is set to use Key module but the Key module is not installed or enabled.'),
+      ];
+    } elseif ($keyModuleAvailable && !$useKeyModule) {
+      $requirements['webform_securepay_key_module'] = [
+        'title' => t('SecurePay Key Module'),
+        'value' => t('Available but not used'),
+        'severity' => REQUIREMENT_INFO,
+        'description' => t('The Key module is available for enhanced credential security. <a href="@url">Configure SecurePay</a> to enable it.', [
+          '@url' => Url::fromRoute('webform_securepay.admin_settings')->toString(),
+        ]),
+      ];
+    } elseif ($useKeyModule && $keyModuleAvailable) {
+      $requirements['webform_securepay_key_module'] = [
+        'title' => t('SecurePay Key Module'),
+        'value' => t('Active - Enhanced security enabled'),
+        'severity' => REQUIREMENT_OK,
+        'description' => t('Credentials are securely stored using the Key module.'),
       ];
     }
 

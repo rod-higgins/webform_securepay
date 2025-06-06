@@ -1,0 +1,282 @@
+/**
+ * @file
+ * Admin styles for SecurePay Webform settings.
+ */
+
+/* ==========================================================================
+   Security Section
+   ========================================================================== */
+
+.webform-securepay-security-section {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.webform-securepay-security-section .form-item-security-use-key-module {
+  margin-bottom: 10px;
+}
+
+.webform-securepay-security-section .form-item-security-use-key-module input[type="checkbox"] {
+  margin-right: 8px;
+}
+
+/* ==========================================================================
+   Key Module Status
+   ========================================================================== */
+
+.webform-securepay-key-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.webform-securepay-key-status.available {
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.webform-securepay-key-status.unavailable {
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.webform-securepay-key-status-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+/* ==========================================================================
+   Credential Fields
+   ========================================================================== */
+
+.webform-securepay-credential-section {
+  position: relative;
+}
+
+.webform-securepay-credential-mode {
+  padding: 16px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.webform-securepay-credential-mode.active {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.webform-securepay-credential-mode.inactive {
+  opacity: 0.6;
+  background: #f9fafb;
+}
+
+.webform-securepay-mode-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #374151;
+}
+
+.webform-securepay-mode-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.webform-securepay-mode-description {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-bottom: 16px;
+}
+
+/* Key Selection Fields */
+.webform-securepay-key-field {
+  margin-bottom: 16px;
+}
+
+.webform-securepay-key-field select {
+  width: 100%;
+  max-width: 400px;
+}
+
+/* Direct Input Fields */
+.webform-securepay-direct-field {
+  margin-bottom: 16px;
+}
+
+.webform-securepay-direct-field input[type="text"],
+.webform-securepay-direct-field input[type="password"] {
+  width: 100%;
+  max-width: 400px;
+}
+
+/* ==========================================================================
+   Connection Test Section
+   ========================================================================== */
+
+.webform-securepay-test-section {
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-top: 24px;
+}
+
+.webform-securepay-test-button {
+  background: #0f766e;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+}
+
+.webform-securepay-test-button:hover {
+  background: #0d6659;
+}
+
+.webform-securepay-test-button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Form States and Transitions
+   ========================================================================== */
+
+.webform-securepay-field-transition {
+  transition: opacity 0.3s ease, max-height 0.3s ease;
+  overflow: hidden;
+}
+
+.webform-securepay-field-hidden {
+  opacity: 0;
+  max-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.webform-securepay-field-visible {
+  opacity: 1;
+  max-height: 1000px;
+}
+
+/* ==========================================================================
+   Help and Information
+   ========================================================================== */
+
+.webform-securepay-help {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.webform-securepay-help h3 {
+  margin-top: 0;
+  color: #075985;
+}
+
+.webform-securepay-help ol {
+  margin-bottom: 16px;
+  padding-left: 20px;
+}
+
+.webform-securepay-help li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+/* Security Notice */
+.webform-securepay-security-notice {
+  background: #ecfdf5;
+  border: 1px solid #d1fae5;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.webform-securepay-security-notice-icon {
+  color: #10b981;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.webform-securepay-security-notice-text {
+  color: #065f46;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .webform-securepay-credential-mode {
+    padding: 12px;
+  }
+  
+  .webform-securepay-direct-field input,
+  .webform-securepay-key-field select {
+    max-width: 100%;
+  }
+  
+  .webform-securepay-mode-label {
+    font-size: 0.875rem;
+  }
+  
+  .webform-securepay-test-section {
+    padding: 16px;
+  }
+}
+
+/* ==========================================================================
+   Dark Mode Support
+   ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  .webform-securepay-security-section {
+    background: #1f2937;
+    border-color: #374151;
+    color: #f9fafb;
+  }
+  
+  .webform-securepay-credential-mode {
+    border-color: #4b5563;
+  }
+  
+  .webform-securepay-credential-mode.active {
+    background: #1e3a8a;
+    border-color: #3b82f6;
+  }
+  
+  .webform-securepay-help {
+    background: #1e293b;
+    border-color: #334155;
+    color: #f1f5f9;
+  }
+  
+  .webform-securepay-test-section {
+    background: #1f2937;
+    border-color: #374151;
+  }
+}

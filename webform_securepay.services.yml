@@ -1,7 +1,10 @@
 services:
   webform_securepay.configuration:
     class: Drupal\webform_securepay\Service\ConfigurationService
-    arguments: ['@config.factory']
+    arguments: 
+      - '@config.factory'
+      - '@key.repository'
+      - '@entity_type.manager'
     tags:
       - { name: service }
 

@@ -3,6 +3,8 @@
 namespace Drupal\webform_securepay\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\key\KeyRepositoryInterface;
 
 /**
  * Configuration service for SecurePay settings.
@@ -30,6 +32,8 @@ class ConfigurationService {
 
   public function __construct(
     private readonly ConfigFactoryInterface $configFactory,
+    private readonly ?KeyRepositoryInterface $keyRepository = null,
+    private readonly ?EntityTypeManagerInterface $entityTypeManager = null,
   ) {}
 
   /**
@@ -49,17 +53,116 @@ class ConfigurationService {
   }
 
   /**
-   * Check if SecurePay is configured.
+   * Get credential value, using Key module if configured.
    */
-  public function isConfigured(): bool {
-    foreach (self::REQUIRED_FIELDS as $field) {
-      $value = $this->get($field);
-      if (empty($value) || !is_string($value) || trim($value) === '') {
-        return false;
+  public function getCredential(string $credentialName): ?string {
+    $useKeyModule = $this->get('use_key_module', false);
+    
+    if ($useKeyModule && $this->isKeyModuleAvailable()) {
+      $keyName = $this->get($credentialName . '_key');
+      if (!empty($keyName)) {
+        return $this->getValueFromKey($keyName);
       }
     }
     
-    return true;
+    // Fallback to direct configuration storage
+    return $this->get($credentialName);
+  }
+
+  /**
+   * Get client ID from configuration or key.
+   */
+  public function getClientId(): ?string {
+    return $this->getCredential('client_id');
+  }
+
+  /**
+   * Get client secret from configuration or key.
+   */
+  public function getClientSecret(): ?string {
+    return $this->getCredential('client_secret');
+  }
+
+  /**
+   * Get merchant code from configuration or key.
+   */
+  public function getMerchantCode(): ?string {
+    return $this->getCredential('merchant_code');
+  }
+
+  /**
+   * Check if SecurePay is configured.
+   */
+  public function isConfigured(): bool {
+    $clientId = $this->getClientId();
+    $clientSecret = $this->getClientSecret();
+    $merchantCode = $this->getMerchantCode();
+    
+    return !empty($clientId) && !empty($clientSecret) && !empty($merchantCode);
+  }
+
+  /**
+   * Check if Key module is available and enabled.
+   */
+  public function isKeyModuleAvailable(): bool {
+    return $this->keyRepository !== null && 
+           $this->entityTypeManager !== null && 
+           $this->entityTypeManager->hasDefinition('key');
+  }
+
+  /**
+   * Get value from a key entity.
+   */
+  private function getValueFromKey(string $keyId): ?string {
+    if (!$this->isKeyModuleAvailable()) {
+      return null;
+    }
+
+    try {
+      $key = $this->keyRepository->getKey($keyId);
+      if ($key) {
+        return $key->getKeyValue();
+      }
+    } catch (\Exception $e) {
+      \Drupal::logger('webform_securepay')->error('Failed to retrieve key @key_id: @message', [
+        '@key_id' => $keyId,
+        '@message' => $e->getMessage(),
+      ]);
+    }
+
+    return null;
+  }
+
+  /**
+   * Get available keys for credential storage.
+   */
+  public function getAvailableKeys(): array {
+    if (!$this->isKeyModuleAvailable()) {
+      return [];
+    }
+
+    try {
+      $keys = $this->entityTypeManager->getStorage('key')->loadMultiple();
+      $options = ['_none' => '- Select a key -'];
+      
+      foreach ($keys as $key) {
+        $options[$key->id()] = $key->label();
+      }
+      
+      return $options;
+    } catch (\Exception $e) {
+      \Drupal::logger('webform_securepay')->error('Failed to load available keys: @message', [
+        '@message' => $e->getMessage(),
+      ]);
+      return [];
+    }
+  }
+
+  /**
+   * Check if using Key module for credential storage.
+   */
+  public function isUsingKeyModule(): bool {
+    return $this->get('use_key_module', false) && $this->isKeyModuleAvailable();
   }
 
   /**
@@ -122,7 +225,7 @@ class ConfigurationService {
   /**
    * Validate currency setting.
    */
-  public function isValidCurrency(string $currency): bool {
+  public static function isValidCurrency(string $currency): bool {
     return in_array($currency, self::getValidCurrencies(), true);
   }
 }
