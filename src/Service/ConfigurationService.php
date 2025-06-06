@@ -18,8 +18,8 @@ class ConfigurationService {
   /**
    * Get configuration value.
    */
-  public function get(string $key): mixed {
-    return $this->configFactory->get(self::CONFIG_NAME)->get($key);
+  public function get(string $key, mixed $default = null): mixed {
+    return $this->configFactory->get(self::CONFIG_NAME)->get($key) ?? $default;
   }
 
   /**
@@ -38,7 +38,8 @@ class ConfigurationService {
     $required = ['client_id', 'client_secret', 'merchant_code'];
     
     foreach ($required as $field) {
-      if (empty($this->get($field))) {
+      $value = $this->get($field);
+      if (empty($value) || !is_string($value) || trim($value) === '') {
         return false;
       }
     }

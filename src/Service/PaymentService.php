@@ -86,25 +86,28 @@ class PaymentService {
     $requiredFields = ['token', 'amount', 'currency'];
     
     foreach ($requiredFields as $field) {
-      if (empty($data[$field])) {
+      if (!isset($data[$field]) || $data[$field] === '' || $data[$field] === null) {
         throw ValidationException::requiredField($field);
       }
     }
 
     // Validate amount
-    if (!is_numeric($data['amount']) || $data['amount'] <= 0) {
-      throw ValidationException::invalidAmount((int) $data['amount'], 1, PHP_INT_MAX);
+    $amount = $data['amount'];
+    if (!is_numeric($amount) || (int)$amount <= 0 || (int)$amount > 999999999) {
+      throw ValidationException::invalidAmount((int)$amount, 1, 999999999);
     }
 
     // Validate currency
+    $currency = strtoupper(trim($data['currency']));
     $supportedCurrencies = array_keys(ConfigurationService::getCurrencyOptions());
-    if (!in_array($data['currency'], $supportedCurrencies)) {
-      throw ValidationException::unsupportedCurrency($data['currency'], $supportedCurrencies);
+    if (!in_array($currency, $supportedCurrencies)) {
+      throw ValidationException::unsupportedCurrency($currency, $supportedCurrencies);
     }
 
-    // Validate token format (basic check)
-    if (strlen($data['token']) < 10) {
-      throw ValidationException::invalidToken('Token too short');
+    // Validate token format
+    $token = trim($data['token']);
+    if (strlen($token) < 10 || !preg_match('/^[a-zA-Z0-9_-]+$/', $token)) {
+      throw ValidationException::invalidToken('Invalid token format');
     }
   }
 

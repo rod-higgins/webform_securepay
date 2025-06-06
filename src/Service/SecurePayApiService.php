@@ -188,6 +188,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
           'audience' => 'https://api.payments.auspost.com.au',
         ],
         'timeout' => 30,
+        'connect_timeout' => 10,
       ]);
 
       $data = json_decode($response->getBody()->getContents(), true);
@@ -220,15 +221,22 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
         'Accept' => 'application/json',
       ],
       'timeout' => 30,
+      'connect_timeout' => 10,
     ];
 
-    if ($data) {
+    if ($data !== null) {
       $options['json'] = $data;
     }
 
     try {
       $response = $this->httpClient->request($method, $endpoints['api'] . $endpoint, $options);
-      $responseData = json_decode($response->getBody()->getContents(), true);
+      $body = $response->getBody()->getContents();
+      
+      if (empty($body)) {
+        throw ApiException::invalidResponse('Empty response body');
+      }
+      
+      $responseData = json_decode($body, true);
       
       if (json_last_error() !== JSON_ERROR_NONE) {
         throw ApiException::malformedJson(json_last_error_msg());
@@ -239,17 +247,22 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     catch (RequestException $e) {
       $statusCode = $e->getResponse() ? $e->getResponse()->getStatusCode() : 0;
       
-      if ($statusCode === 401) {
-        throw ApiException::authenticationFailed();
+      switch ($statusCode) {
+        case 401:
+          // Clear invalid token
+          $this->accessToken = null;
+          $this->tokenExpiry = 0;
+          throw ApiException::authenticationFailed($e->getMessage());
+          
+        case 429:
+          throw ApiException::apiRateLimited();
+          
+        case 503:
+          throw ApiException::serviceUnavailable();
+          
+        default:
+          throw ApiException::httpError($statusCode, $e->getMessage());
       }
-      elseif ($statusCode === 429) {
-        throw ApiException::apiRateLimited();
-      }
-      elseif ($statusCode === 503) {
-        throw ApiException::serviceUnavailable();
-      }
-      
-      throw ApiException::httpError($statusCode, $e->getMessage());
     }
   }
 }

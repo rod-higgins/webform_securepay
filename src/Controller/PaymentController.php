@@ -43,7 +43,7 @@ class PaymentController extends ControllerBase {
     }
 
     try {
-      $content = $request->getContent();
+      $content = trim($request->getContent());
       if (empty($content)) {
         return $this->errorResponse('Empty request body', Response::HTTP_BAD_REQUEST);
       }
@@ -54,21 +54,27 @@ class PaymentController extends ControllerBase {
         return $this->errorResponse('Invalid JSON: ' . json_last_error_msg(), Response::HTTP_BAD_REQUEST);
       }
 
+      if (!is_array($data)) {
+        return $this->errorResponse('Invalid data format', Response::HTTP_BAD_REQUEST);
+      }
+
       // Validate required fields
       $requiredFields = ['token', 'amount', 'currency'];
       foreach ($requiredFields as $field) {
-        if (empty($data[$field])) {
+        if (!isset($data[$field]) || $data[$field] === '' || $data[$field] === null) {
           return $this->errorResponse("Missing required field: {$field}", Response::HTTP_BAD_REQUEST);
         }
       }
 
       // Additional validation
-      if (!is_numeric($data['amount']) || $data['amount'] <= 0) {
+      if (!is_numeric($data['amount']) || (int)$data['amount'] <= 0) {
         return $this->errorResponse('Invalid amount', Response::HTTP_BAD_REQUEST);
       }
 
-      // Add client IP to payment data
+      // Sanitize and add client IP
       $data['ipAddress'] = $request->getClientIp();
+      $data['amount'] = (int)$data['amount'];
+      $data['currency'] = strtoupper(trim($data['currency']));
 
       $result = $this->paymentService->processPayment($data);
       

@@ -124,8 +124,17 @@ class WebformSecurePay extends WebformElementBase implements ContainerFactoryPlu
     parent::validateForm($form, $form_state);
 
     $amount = $form_state->getValue('amount');
-    if (!empty($amount) && is_numeric($amount) && $amount <= 0) {
-      $form_state->setErrorByName('amount', $this->t('Amount must be greater than zero.'));
+    if (!empty($amount)) {
+      // Handle both numeric values and tokens
+      if (is_numeric($amount)) {
+        if ((int)$amount <= 0) {
+          $form_state->setErrorByName('amount', $this->t('Amount must be greater than zero.'));
+        }
+        if ((int)$amount > 999999999) {
+          $form_state->setErrorByName('amount', $this->t('Amount too large.'));
+        }
+      }
+      // If it's not numeric, assume it's a token - will be validated at runtime
     }
   }
 

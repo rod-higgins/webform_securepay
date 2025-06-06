@@ -87,6 +87,7 @@ function webform_securepay_schema() {
       ],
       'created' => [
         'type' => 'int',
+        'unsigned' => TRUE,
         'not null' => TRUE,
         'default' => 0,
         'description' => 'Timestamp when transaction was created.',
@@ -99,12 +100,15 @@ function webform_securepay_schema() {
       ],
     ],
     'primary key' => ['id'],
-    'indexes' => [
+    'unique keys' => [
       'order_id' => ['order_id'],
+    ],
+    'indexes' => [
       'transaction_id' => ['transaction_id'],
       'status' => ['status'],
       'created' => ['created'],
       'currency' => ['currency'],
+      'ip_status' => ['ip_address', 'status'],
     ],
   ];
 
@@ -211,6 +215,16 @@ function webform_securepay_update_8001() {
           ],
         ],
       ]);
+    }
+
+    // Add unique constraint for order_id if it doesn't exist
+    if (!$schema->indexExists($table, 'order_id')) {
+      $schema->addUniqueKey($table, 'order_id', ['order_id']);
+    }
+
+    // Add composite index for IP and status
+    if (!$schema->indexExists($table, 'ip_status')) {
+      $schema->addIndex($table, 'ip_status', ['ip_address', 'status']);
     }
   }
 }

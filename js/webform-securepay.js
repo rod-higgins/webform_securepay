@@ -59,8 +59,8 @@
           attempts++;
           setTimeout(checkScript, 100);
         } else {
-          console.error('SecurePay: SDK failed to load');
-          this.showError('Payment system unavailable. Please refresh the page.');
+          console.error('SecurePay: SDK failed to load after 5 seconds');
+          this.showError('Payment system unavailable. Please refresh the page and try again.');
           this.hideLoading();
         }
       };
@@ -190,14 +190,20 @@
       
       let message = 'Payment processing failed';
       
-      if (xhr.responseJSON && xhr.responseJSON.error) {
-        message = xhr.responseJSON.error;
-      } else if (status === 'timeout') {
-        message = 'Payment request timed out. Please try again.';
-      } else if (status === 'abort') {
-        message = 'Payment request was cancelled.';
-      } else if (error) {
-        message = `Network error: ${error}`;
+      try {
+        if (xhr.responseJSON && xhr.responseJSON.error) {
+          message = xhr.responseJSON.error;
+        } else if (status === 'timeout') {
+          message = 'Payment request timed out. Please try again.';
+        } else if (status === 'abort') {
+          message = 'Payment request was cancelled.';
+        } else if (xhr.status === 0) {
+          message = 'Network connection error. Please check your internet connection.';
+        } else if (error) {
+          message = `Network error: ${error}`;
+        }
+      } catch (e) {
+        // Use default message if parsing fails
       }
       
       this.showError(message);
