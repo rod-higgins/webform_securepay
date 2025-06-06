@@ -11,100 +11,42 @@ use Drupal\Core\Database\Database;
  * Implements hook_install().
  */
 function webform_securepay_install() {
-  // Set default configuration values for the modern SecurePay API
   $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
   
-  // Authentication Settings (OAuth 2.0)
-  $config->set('client_id', '');
-  $config->set('client_secret', '');
-  $config->set('merchant_code', '');
-  $config->set('environment', 'sandbox');
-  
-  // Legacy settings (maintain backward compatibility)
-  $config->set('api_url', 'https://api.securepay.com.au/xmlapi/payment');
-  $config->set('test_mode', TRUE);
-  
-  // Payment Settings
-  $config->set('currency', 'AUD');
-  $config->set('default_mode', 'checkout');
-  $config->set('order_id_prefix', 'WF_');
-  $config->set('timeout', 30);
-  
-  // Card Settings
-  $config->set('allowed_card_types', ['visa', 'mastercard', 'amex', 'diners']);
-  $config->set('show_card_icons', TRUE);
-  
-  // UI Style Settings
-  $config->set('background_color', 'rgba(255, 255, 255, 0.1)');
-  $config->set('label_font_family', 'Arial, Helvetica, sans-serif');
-  $config->set('label_font_size', '1rem');
-  $config->set('label_color', '#333');
-  $config->set('input_font_family', 'Arial, Helvetica, sans-serif');
-  $config->set('input_font_size', '1rem');
-  $config->set('input_color', '#333');
-  
-  // Feature Flags
-  $config->set('dcc_enabled', FALSE);
-  $config->set('three_ds_enabled', FALSE);
-  $config->set('fraud_guard_enabled', FALSE);
-  $config->set('auto_focus', FALSE);
-  $config->set('bin_check_enabled', FALSE);
-  
-  // Advanced Settings
-  $config->set('log_transactions', FALSE);
-  $config->set('debug_mode', FALSE);
-  
-  // Fraud Settings
-  $config->set('fraud_check_type', '');
-  $config->set('fraud_score_threshold', 75);
-  
-  // Notification Settings
-  $config->set('success_message', 'Payment processed successfully.');
-  $config->set('error_message', 'Payment processing failed. Please try again.');
-  $config->set('processing_message', 'Processing your payment...');
-  $config->set('email_notifications', FALSE);
-  $config->set('notification_email', '');
-  
-  // Webhook Settings
-  $config->set('webhook_enabled', FALSE);
-  $config->set('webhook_secret', '');
-  
-  // Security Settings
-  $config->set('pci_compliance_mode', TRUE);
-  $config->set('data_retention_days', 90);
-  
-  // Apple Pay Settings (for future expansion)
-  $config->set('apple_pay_enabled', FALSE);
-  $config->set('apple_pay_merchant_id', '');
-  $config->set('apple_pay_domains', []);
-  
-  // PayPal Settings (for future expansion)
-  $config->set('paypal_enabled', FALSE);
-  $config->set('paypal_client_id', '');
-  
-  // Analytics Settings
-  $config->set('analytics_enabled', FALSE);
-  $config->set('google_analytics_id', '');
-  
-  // Rate Limiting
-  $config->set('rate_limit_enabled', TRUE);
-  $config->set('max_attempts_per_hour', 50);
-  
-  // Multi-language Support
-  $config->set('language_support', FALSE);
-  $config->set('default_language', 'en');
-  
-  // Custom CSS and JavaScript
-  $config->set('custom_css', '');
-  $config->set('custom_javascript', '');
+  // Set default configuration values
+  $defaults = [
+    'client_id' => '',
+    'client_secret' => '',
+    'merchant_code' => '',
+    'environment' => 'sandbox',
+    'currency' => 'AUD',
+    'order_id_prefix' => 'WF_',
+    'timeout' => 30,
+    'allowed_card_types' => ['visa', 'mastercard', 'amex', 'diners'],
+    'dcc_enabled' => FALSE,
+    'three_ds_enabled' => FALSE,
+    'fraud_guard_enabled' => FALSE,
+    'log_transactions' => FALSE,
+    'debug_mode' => FALSE,
+    'webhook_enabled' => FALSE,
+    'webhook_secret' => '',
+    'rate_limit_enabled' => TRUE,
+    'max_attempts_per_hour' => 50,
+    'email_notifications' => FALSE,
+    'notification_email' => '',
+    'data_retention_days' => 90,
+  ];
+
+  foreach ($defaults as $key => $value) {
+    $config->set($key, $value);
+  }
   
   $config->save();
 
-  // Create database tables for transaction logging if needed
+  // Create database tables
   _webform_securepay_create_tables();
 
-  // Display installation message
-  \Drupal::messenger()->addMessage(t('SecurePay module has been installed. Configure your settings at <a href="@url">SecurePay Settings</a>.', [
+  \Drupal::messenger()->addMessage(t('SecurePay module installed. Configure your settings at <a href="@url">SecurePay Settings</a>.', [
     '@url' => \Drupal::url('webform_securepay.admin_settings'),
   ]));
 }
@@ -118,20 +60,14 @@ function webform_securepay_uninstall() {
   
   // Drop custom tables
   $schema = Database::getConnection()->schema();
+  $tables = ['webform_securepay_transactions', 'webform_securepay_webhooks'];
   
-  if ($schema->tableExists('webform_securepay_transactions')) {
-    $schema->dropTable('webform_securepay_transactions');
+  foreach ($tables as $table) {
+    if ($schema->tableExists($table)) {
+      $schema->dropTable($table);
+    }
   }
   
-  if ($schema->tableExists('webform_securepay_refunds')) {
-    $schema->dropTable('webform_securepay_refunds');
-  }
-  
-  if ($schema->tableExists('webform_securepay_webhooks')) {
-    $schema->dropTable('webform_securepay_webhooks');
-  }
-  
-  // Clear cache
   drupal_flush_all_caches();
 }
 
@@ -141,7 +77,7 @@ function webform_securepay_uninstall() {
 function webform_securepay_schema() {
   $schema = [];
 
-  // Transaction logging table
+  // Simplified transaction logging table
   $schema['webform_securepay_transactions'] = [
     'description' => 'Stores SecurePay transaction data',
     'fields' => [
@@ -149,179 +85,86 @@ function webform_securepay_schema() {
         'type' => 'serial',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Primary Key: Unique transaction ID.',
+        'description' => 'Primary Key',
       ],
       'order_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => TRUE,
-        'description' => 'SecurePay order ID.',
+        'description' => 'Order ID',
       ],
       'transaction_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => FALSE,
-        'description' => 'SecurePay transaction ID.',
-      ],
-      'webform_id' => [
-        'type' => 'varchar',
-        'length' => 128,
-        'not null' => TRUE,
-        'description' => 'Webform ID.',
-      ],
-      'submission_id' => [
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => FALSE,
-        'description' => 'Webform submission ID.',
+        'description' => 'Transaction ID',
       ],
       'amount' => [
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Transaction amount in cents.',
+        'description' => 'Amount in cents',
       ],
       'currency' => [
         'type' => 'varchar',
         'length' => 3,
         'not null' => TRUE,
         'default' => 'AUD',
-        'description' => 'Transaction currency.',
+        'description' => 'Currency',
       ],
       'status' => [
         'type' => 'varchar',
         'length' => 32,
         'not null' => TRUE,
-        'description' => 'Transaction status.',
+        'description' => 'Status',
       ],
       'gateway_response_code' => [
         'type' => 'varchar',
         'length' => 16,
         'not null' => FALSE,
-        'description' => 'Gateway response code.',
+        'description' => 'Gateway response code',
       ],
       'gateway_response_message' => [
         'type' => 'text',
         'not null' => FALSE,
-        'description' => 'Gateway response message.',
+        'description' => 'Gateway response message',
       ],
       'ip_address' => [
         'type' => 'varchar',
         'length' => 45,
         'not null' => FALSE,
-        'description' => 'Client IP address.',
+        'description' => 'Client IP',
       ],
       'user_agent' => [
         'type' => 'text',
         'not null' => FALSE,
-        'description' => 'Client user agent.',
-      ],
-      'fraud_score' => [
-        'type' => 'int',
-        'not null' => FALSE,
-        'description' => 'Fraud check score.',
-      ],
-      'three_ds_result' => [
-        'type' => 'varchar',
-        'length' => 32,
-        'not null' => FALSE,
-        'description' => '3DS2 authentication result.',
+        'description' => 'User agent',
       ],
       'raw_response' => [
         'type' => 'text',
         'size' => 'big',
         'not null' => FALSE,
-        'description' => 'Raw API response data.',
+        'description' => 'Raw API response',
       ],
       'created' => [
         'type' => 'int',
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Timestamp when transaction was created.',
+        'description' => 'Created timestamp',
       ],
       'updated' => [
         'type' => 'int',
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Timestamp when transaction was last updated.',
+        'description' => 'Updated timestamp',
       ],
     ],
     'primary key' => ['id'],
-    'unique keys' => [
-      'order_id' => ['order_id'],
-    ],
+    'unique keys' => ['order_id' => ['order_id']],
     'indexes' => [
-      'webform_id' => ['webform_id'],
-      'submission_id' => ['submission_id'],
       'status' => ['status'],
       'created' => ['created'],
-      'amount' => ['amount'],
-    ],
-  ];
-
-  // Refunds table
-  $schema['webform_securepay_refunds'] = [
-    'description' => 'Stores SecurePay refund data',
-    'fields' => [
-      'id' => [
-        'type' => 'serial',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'description' => 'Primary Key: Unique refund ID.',
-      ],
-      'transaction_id' => [
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'description' => 'Reference to original transaction.',
-      ],
-      'refund_id' => [
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => FALSE,
-        'description' => 'SecurePay refund ID.',
-      ],
-      'amount' => [
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => TRUE,
-        'description' => 'Refund amount in cents.',
-      ],
-      'reason' => [
-        'type' => 'text',
-        'not null' => FALSE,
-        'description' => 'Reason for refund.',
-      ],
-      'status' => [
-        'type' => 'varchar',
-        'length' => 32,
-        'not null' => TRUE,
-        'description' => 'Refund status.',
-      ],
-      'processed_by' => [
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => FALSE,
-        'description' => 'User ID who processed the refund.',
-      ],
-      'created' => [
-        'type' => 'int',
-        'not null' => TRUE,
-        'default' => 0,
-        'description' => 'Timestamp when refund was created.',
-      ],
-    ],
-    'primary key' => ['id'],
-    'indexes' => [
-      'transaction_id' => ['transaction_id'],
-      'status' => ['status'],
-      'created' => ['created'],
-    ],
-    'foreign keys' => [
-      'transaction' => [
-        'table' => 'webform_securepay_transactions',
-        'columns' => ['transaction_id' => 'id'],
-      ],
+      'ip_address' => ['ip_address'],
     ],
   ];
 
@@ -333,62 +176,44 @@ function webform_securepay_schema() {
         'type' => 'serial',
         'unsigned' => TRUE,
         'not null' => TRUE,
-        'description' => 'Primary Key: Unique webhook ID.',
+        'description' => 'Primary Key',
       ],
       'event_type' => [
         'type' => 'varchar',
         'length' => 128,
         'not null' => TRUE,
-        'description' => 'Webhook event type.',
+        'description' => 'Event type',
       ],
       'order_id' => [
         'type' => 'varchar',
         'length' => 255,
         'not null' => FALSE,
-        'description' => 'Related order ID.',
+        'description' => 'Order ID',
       ],
       'payload' => [
         'type' => 'text',
         'size' => 'big',
         'not null' => TRUE,
-        'description' => 'Webhook payload data.',
-      ],
-      'signature' => [
-        'type' => 'varchar',
-        'length' => 255,
-        'not null' => FALSE,
-        'description' => 'Webhook signature.',
-      ],
-      'ip_address' => [
-        'type' => 'varchar',
-        'length' => 45,
-        'not null' => FALSE,
-        'description' => 'Source IP address.',
+        'description' => 'Payload data',
       ],
       'processed' => [
         'type' => 'int',
         'size' => 'tiny',
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Whether webhook was processed successfully.',
-      ],
-      'error_message' => [
-        'type' => 'text',
-        'not null' => FALSE,
-        'description' => 'Error message if processing failed.',
+        'description' => 'Processed flag',
       ],
       'created' => [
         'type' => 'int',
         'not null' => TRUE,
         'default' => 0,
-        'description' => 'Timestamp when webhook was received.',
+        'description' => 'Created timestamp',
       ],
     ],
     'primary key' => ['id'],
     'indexes' => [
       'event_type' => ['event_type'],
       'order_id' => ['order_id'],
-      'processed' => ['processed'],
       'created' => ['created'],
     ],
   ];
@@ -411,138 +236,15 @@ function _webform_securepay_create_tables() {
 }
 
 /**
- * Update 8001: Migrate from legacy XML API to modern REST API.
- */
-function webform_securepay_update_8001() {
-  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
-  
-  // Migrate old settings to new format
-  $old_merchant_id = $config->get('merchant_id');
-  $old_password = $config->get('password');
-  
-  if ($old_merchant_id) {
-    // For migration, use the old merchant_id as merchant_code
-    $config->set('merchant_code', $old_merchant_id);
-    
-    // Clear old legacy settings or keep for backward compatibility
-    // $config->clear('merchant_id');
-    // $config->clear('password');
-  }
-  
-  // Add new OAuth 2.0 settings
-  if (!$config->get('client_id')) {
-    $config->set('client_id', '');
-  }
-  if (!$config->get('client_secret')) {
-    $config->set('client_secret', '');
-  }
-  if (!$config->get('environment')) {
-    $config->set('environment', 'sandbox');
-  }
-  
-  // Add new feature flags
-  $config->set('dcc_enabled', FALSE);
-  $config->set('three_ds_enabled', FALSE);
-  $config->set('fraud_guard_enabled', FALSE);
-  
-  $config->save();
-  
-  return t('Migrated SecurePay configuration to modern REST API format.');
-}
-
-/**
- * Update 8002: Add new configuration options.
- */
-function webform_securepay_update_8002() {
-  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
-  
-  // Add card type settings
-  if (!$config->get('allowed_card_types')) {
-    $config->set('allowed_card_types', ['visa', 'mastercard', 'amex', 'diners']);
-  }
-  
-  // Add UI style settings
-  $style_defaults = [
-    'background_color' => 'rgba(255, 255, 255, 0.1)',
-    'label_font_family' => 'Arial, Helvetica, sans-serif',
-    'label_font_size' => '1rem',
-    'label_color' => '#333',
-    'input_font_family' => 'Arial, Helvetica, sans-serif',
-    'input_font_size' => '1rem',
-    'input_color' => '#333',
-  ];
-  
-  foreach ($style_defaults as $key => $value) {
-    if (!$config->get($key)) {
-      $config->set($key, $value);
-    }
-  }
-  
-  $config->save();
-  
-  return t('Added new UI customization options.');
-}
-
-/**
- * Update 8003: Create transaction logging tables.
- */
-function webform_securepay_update_8003() {
-  _webform_securepay_create_tables();
-  
-  return t('Created transaction logging tables.');
-}
-
-/**
- * Update 8004: Add webhook and notification settings.
- */
-function webform_securepay_update_8004() {
-  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
-  
-  // Add webhook settings
-  $config->set('webhook_enabled', FALSE);
-  $config->set('webhook_secret', '');
-  
-  // Add notification settings
-  $config->set('email_notifications', FALSE);
-  $config->set('notification_email', '');
-  $config->set('success_message', 'Payment processed successfully.');
-  $config->set('error_message', 'Payment processing failed. Please try again.');
-  
-  $config->save();
-  
-  return t('Added webhook and notification settings.');
-}
-
-/**
- * Update 8005: Add security and compliance settings.
- */
-function webform_securepay_update_8005() {
-  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
-  
-  // Add security settings
-  $config->set('pci_compliance_mode', TRUE);
-  $config->set('data_retention_days', 90);
-  $config->set('rate_limit_enabled', TRUE);
-  $config->set('max_attempts_per_hour', 50);
-  
-  // Add debug mode
-  $config->set('debug_mode', FALSE);
-  
-  $config->save();
-  
-  return t('Added security and compliance settings.');
-}
-
-/**
  * Implements hook_requirements().
  */
 function webform_securepay_requirements($phase) {
   $requirements = [];
 
-  if ($phase == 'runtime') {
+  if ($phase === 'runtime') {
     $config = \Drupal::config('webform_securepay.settings');
     
-    // Check if basic configuration is set
+    // Check configuration
     $client_id = $config->get('client_id');
     $merchant_code = $config->get('merchant_code');
     
@@ -551,7 +253,7 @@ function webform_securepay_requirements($phase) {
         'title' => t('SecurePay Configuration'),
         'value' => t('Not configured'),
         'severity' => REQUIREMENT_WARNING,
-        'description' => t('SecurePay module requires configuration. Please visit the <a href="@url">settings page</a> to configure your SecurePay credentials.', [
+        'description' => t('Configure your SecurePay credentials at <a href="@url">Settings</a>.', [
           '@url' => \Drupal::url('webform_securepay.admin_settings'),
         ]),
       ];
@@ -569,17 +271,17 @@ function webform_securepay_requirements($phase) {
         'title' => t('SecurePay SSL'),
         'value' => t('SSL required'),
         'severity' => REQUIREMENT_ERROR,
-        'description' => t('SecurePay requires SSL/HTTPS in production mode for security compliance.'),
+        'description' => t('SSL/HTTPS is required in production mode.'),
       ];
     }
     
-    // Check webform module dependency
+    // Check webform dependency
     if (!\Drupal::moduleHandler()->moduleExists('webform')) {
       $requirements['webform_securepay_webform'] = [
         'title' => t('SecurePay Webform Dependency'),
-        'value' => t('Webform module not found'),
+        'value' => t('Webform module required'),
         'severity' => REQUIREMENT_ERROR,
-        'description' => t('SecurePay module requires the Webform module to be installed and enabled.'),
+        'description' => t('The Webform module must be installed and enabled.'),
       ];
     }
   }

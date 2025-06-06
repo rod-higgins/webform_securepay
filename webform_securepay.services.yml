@@ -1,4 +1,5 @@
 services:
+  # Core services
   webform_securepay.configuration:
     class: Drupal\webform_securepay\Service\ConfigurationService
     arguments: ['@config.factory']
@@ -7,37 +8,50 @@ services:
     class: Drupal\webform_securepay\Service\SecurePayApiService
     arguments: 
       - '@http_client'
-      - '@config.factory'
-      - '@logger.channel.webform_securepay'
-
-  webform_securepay.fraud_detection:
-    class: Drupal\webform_securepay\Service\FraudDetectionService
-    arguments:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
+
+  # Supporting services
+  webform_securepay.payment_validator:
+    class: Drupal\webform_securepay\Service\PaymentValidator
+
+  webform_securepay.transaction_logger:
+    class: Drupal\webform_securepay\Service\TransactionLogger
+    arguments:
+      - '@database'
+      - '@webform_securepay.configuration'
+      - '@logger.channel.webform_securepay'
+
+  webform_securepay.rate_limiter:
+    class: Drupal\webform_securepay\Service\RateLimiter
+    arguments:
+      - '@database'
+      - '@webform_securepay.configuration'
 
   webform_securepay.notification_service:
     class: Drupal\webform_securepay\Service\NotificationService
     arguments:
       - '@webform_securepay.configuration'
-      - '@plugin.manager.mail'
-      - '@current_user'
+      - '@logger.channel.webform_securepay'
 
+  # Main processor
   webform_securepay.payment_processor:
     class: Drupal\webform_securepay\Service\PaymentProcessor
     arguments:
       - '@webform_securepay.api'
       - '@webform_securepay.configuration'
-      - '@webform_securepay.fraud_detection'
-      - '@webform_securepay.notification_service'
+      - '@webform_securepay.transaction_logger'
+      - '@webform_securepay.payment_validator'
       - '@logger.channel.webform_securepay'
 
+  # Webhook processor
   webform_securepay.webhook_processor:
     class: Drupal\webform_securepay\Service\WebhookProcessor
     arguments:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
 
+  # Logger
   logger.channel.webform_securepay:
     parent: logger.channel_base
     arguments: ['webform_securepay']

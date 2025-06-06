@@ -2,110 +2,84 @@
 
 namespace Drupal\webform_securepay\Service;
 
-use Drupal\Core\Config\ConfigFactoryInterface;
-use Drupal\Core\Logger\LoggerChannelFactoryInterface;
-use Drupal\Core\StringTranslation\StringTranslationTrait;
+use Drupal\webform_securepay\Exception\ApiException;
+use Drupal\webform_securepay\ValueObject\SecurePayConfig;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 use Psr\Log\LoggerInterface;
 
 /**
- * Service for SecurePay API interactions using modern REST API.
+ * Refactored SecurePay API service.
  */
 class SecurePayApiService implements SecurePayApiServiceInterface {
 
-  use StringTranslationTrait;
-
-  private const API_ENDPOINTS = [
-    'live' => [
-      'auth' => 'https://welcome.api2.auspost.com.au/oauth/token',
-      'api' => 'https://payments.auspost.net.au',
-      'ui_sdk' => 'https://payments.auspost.net.au/v3/ui/client/securepay-ui.min.js',
-      'threeDS_sdk' => 'https://api.securepay.com.au/threeds-js/securepay-threeds.js',
-    ],
-    'sandbox' => [
-      'auth' => 'https://welcome.api2.sandbox.auspost.com.au/oauth/token',
-      'api' => 'https://payments-stest.npe.auspost.zone',
-      'ui_sdk' => 'https://payments-stest.npe.auspost.zone/v3/ui/client/securepay-ui.min.js',
-      'threeDS_sdk' => 'https://test.api.securepay.com.au/threeds-js/securepay-threeds.js',
-    ],
-  ];
-
-  private const DEFAULT_TIMEOUT = 30;
-  private const TOKEN_BUFFER_SECONDS = 60;
   private const AUDIENCE = 'https://api.payments.auspost.com.au';
   private const GRANT_TYPE = 'client_credentials';
+  private const TOKEN_BUFFER_SECONDS = 60;
 
-  private ?string $accessToken = NULL;
+  private ?string $accessToken = null;
   private int $tokenExpiry = 0;
 
   public function __construct(
     private readonly ClientInterface $httpClient,
-    private readonly ConfigFactoryInterface $configFactory,
+    private readonly ConfigurationService $configService,
     private readonly LoggerInterface $logger,
   ) {}
 
   public function processPayment(array $payment_data, array $element_settings = []): array {
-    $settings = $this->mergeSettings($element_settings);
-    $this->validatePaymentSettings($settings);
-
-    $payment_request = $this->buildPaymentRequest($payment_data, $settings);
-
+    $config = $this->configService->getSecurePayConfig();
+    $request = $this->buildPaymentRequest($payment_data, $config);
+    
     try {
-      $result = $this->makeApiRequest('POST', '/v2/payments', $payment_request);
-      $this->logTransaction($payment_request['orderId'], $result);
-
-      return $this->formatPaymentResult($result, $payment_data);
+      return $this->makeApiRequest('POST', '/v2/payments', $request);
     }
     catch (\Exception $e) {
-      $this->logger->error('Payment processing failed: @message', ['@message' => $e->getMessage()]);
-      
-      return [
-        'success' => FALSE,
-        'error' => $this->t('Payment processing failed. Please try again.'),
-      ];
+      throw new ApiException("Payment processing failed: {$e->getMessage()}", 0, $e);
     }
   }
 
-  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = NULL): array|false {
-    $merchant_code = $this->getConfig('merchant_code');
-    if (empty($merchant_code)) {
-      throw new \InvalidArgumentException('Merchant code is required');
-    }
-
-    $order_request = [
-      'merchantCode' => $merchant_code,
+  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = null): array|false {
+    $config = $this->configService->getSecurePayConfig();
+    
+    $request = [
+      'merchantCode' => $config->merchantCode,
       'amount' => $amount,
       'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
       'orderType' => $order_type,
     ];
 
     if ($order_reference) {
-      $order_request['orderReference'] = $order_reference;
+      $request['orderReference'] = $order_reference;
     }
 
     try {
-      return $this->makeApiRequest('POST', '/v2/payments/orders/initiate', $order_request);
+      return $this->makeApiRequest('POST', '/v2/payments/orders/initiate', $request);
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to initiate payment order: @message', ['@message' => $e->getMessage()]);
-      return FALSE;
+      $this->logger->error('Failed to initiate payment order: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+      return false;
     }
   }
 
-  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = NULL): array|false {
-    $refund_request = [
-      'merchantCode' => $merchant_code ?: $this->getConfig('merchant_code'),
+  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = null): array|false {
+    $config = $this->configService->getSecurePayConfig();
+    
+    $request = [
+      'merchantCode' => $merchant_code ?: $config->merchantCode,
       'amount' => $amount,
       'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
     ];
 
     try {
-      return $this->makeApiRequest('POST', "/v2/orders/{$order_id}/refunds", $refund_request);
+      return $this->makeApiRequest('POST', "/v2/orders/{$order_id}/refunds", $request);
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to process refund: @message', ['@message' => $e->getMessage()]);
-      return FALSE;
+      $this->logger->error('Failed to process refund: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+      return false;
     }
   }
 
@@ -115,19 +89,23 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       return ($result['status'] ?? '') === 'UP';
     }
     catch (\Exception $e) {
-      $this->logger->error('Connection test failed: @message', ['@message' => $e->getMessage()]);
-      return FALSE;
+      $this->logger->error('Connection test failed: {message}', [
+        'message' => $e->getMessage(),
+      ]);
+      return false;
     }
   }
 
   public function getUiSdkUrl(): string {
-    $environment = $this->getConfig('environment', 'sandbox');
-    return self::API_ENDPOINTS[$environment]['ui_sdk'];
+    $config = $this->configService->getSecurePayConfig();
+    $endpoints = $config->getApiEndpoints();
+    return $endpoints['ui_sdk'];
   }
 
   public function getThreeDS2SdkUrl(): string {
-    $environment = $this->getConfig('environment', 'sandbox');
-    return self::API_ENDPOINTS[$environment]['threeDS_sdk'];
+    $config = $this->configService->getSecurePayConfig();
+    $endpoints = $config->getApiEndpoints();
+    return $endpoints['threeDS_sdk'];
   }
 
   private function getAccessToken(): string {
@@ -135,13 +113,13 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       return $this->accessToken;
     }
 
-    $credentials = $this->validateCredentials();
-    $auth_url = $this->getEndpoint('auth');
+    $config = $this->configService->getSecurePayConfig();
+    $endpoints = $config->getApiEndpoints();
 
     try {
-      $response = $this->httpClient->post($auth_url, [
+      $response = $this->httpClient->post($endpoints['auth'], [
         'headers' => [
-          'Authorization' => 'Basic ' . base64_encode($credentials['client_id'] . ':' . $credentials['client_secret']),
+          'Authorization' => 'Basic ' . base64_encode($config->clientId . ':' . $config->clientSecret),
           'Content-Type' => 'application/x-www-form-urlencoded',
         ],
         'form_params' => [
@@ -150,10 +128,10 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
         ],
       ]);
 
-      $data = json_decode($response->getBody()->getContents(), TRUE);
-
+      $data = json_decode($response->getBody()->getContents(), true);
+      
       if (empty($data['access_token'])) {
-        throw new \Exception('Invalid token response');
+        throw new ApiException('Invalid token response from SecurePay');
       }
 
       $this->accessToken = $data['access_token'];
@@ -162,20 +140,21 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       return $this->accessToken;
     }
     catch (RequestException $e) {
-      throw new \Exception('Authentication failed: ' . $e->getMessage());
+      throw new ApiException("Authentication failed: {$e->getMessage()}", 0, $e);
     }
   }
 
-  private function makeApiRequest(string $method, string $endpoint, ?array $data = NULL): array {
+  private function makeApiRequest(string $method, string $endpoint, ?array $data = null): array {
     $token = $this->getAccessToken();
-    $base_url = $this->getEndpoint('api');
+    $config = $this->configService->getSecurePayConfig();
+    $endpoints = $config->getApiEndpoints();
 
     $options = [
       'headers' => [
-        'Authorization' => 'Bearer ' . $token,
+        'Authorization' => "Bearer {$token}",
         'Content-Type' => 'application/json',
       ],
-      'timeout' => $this->getConfig('timeout', self::DEFAULT_TIMEOUT),
+      'timeout' => $config->timeout,
     ];
 
     if ($data) {
@@ -183,97 +162,22 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
 
     try {
-      $response = $this->httpClient->request($method, $base_url . $endpoint, $options);
-      return json_decode($response->getBody()->getContents(), TRUE) ?: [];
+      $response = $this->httpClient->request($method, $endpoints['api'] . $endpoint, $options);
+      return json_decode($response->getBody()->getContents(), true) ?: [];
     }
     catch (RequestException $e) {
-      throw new \Exception('API request failed: ' . $e->getMessage());
+      throw new ApiException("API request failed: {$e->getMessage()}", 0, $e);
     }
   }
 
-  private function validateCredentials(): array {
-    $client_id = $this->getConfig('client_id');
-    $client_secret = $this->getConfig('client_secret');
-
-    if (empty($client_id) || empty($client_secret)) {
-      throw new \InvalidArgumentException('Client ID and Client Secret are required');
-    }
-
-    return ['client_id' => $client_id, 'client_secret' => $client_secret];
-  }
-
-  private function buildPaymentRequest(array $payment_data, array $settings): array {
-    $order_id = $this->generateOrderId($settings['order_id_prefix'] ?? 'WF_');
-
-    $request = [
-      'merchantCode' => $settings['merchant_code'],
+  private function buildPaymentRequest(array $payment_data, SecurePayConfig $config): array {
+    return [
+      'merchantCode' => $config->merchantCode,
       'amount' => $payment_data['amount'],
       'token' => $payment_data['token'],
       'ip' => $payment_data['ip'] ?? $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-      'orderId' => $order_id,
+      'orderId' => $payment_data['orderId'],
+      'currency' => $payment_data['currency'] ?? $config->currency,
     ];
-
-    $optional_fields = ['customer_code', 'currency', 'threed_secure_details', 'dcc_details', 'fraud_check_details'];
-    foreach ($optional_fields as $field) {
-      if (!empty($payment_data[$field])) {
-        $request[str_replace('_', '', ucwords($field, '_'))] = $payment_data[$field];
-      }
-    }
-
-    return $request;
-  }
-
-  private function formatPaymentResult(array $result, array $payment_data): array {
-    return [
-      'success' => ($result['status'] ?? '') === 'paid',
-      'transaction_id' => $result['orderId'] ?? '',
-      'bank_transaction_id' => $result['bankTransactionId'] ?? '',
-      'status' => $result['status'] ?? 'unknown',
-      'amount' => $result['amount'] ?? $payment_data['amount'],
-      'currency' => $result['currency'] ?? 'AUD',
-      'gateway_response_code' => $result['gatewayResponseCode'] ?? '',
-      'gateway_response_message' => $result['gatewayResponseMessage'] ?? '',
-      'created_at' => $result['createdAt'] ?? '',
-      'raw_response' => $result,
-    ];
-  }
-
-  private function validatePaymentSettings(array $settings): void {
-    if (empty($settings['merchant_code'])) {
-      throw new \InvalidArgumentException('Merchant code is required');
-    }
-  }
-
-  private function logTransaction(string $order_id, array $result): void {
-    if ($this->getConfig('log_transactions')) {
-      $this->logger->info('SecurePay transaction: @order_id - @status', [
-        '@order_id' => $order_id,
-        '@status' => $result['status'] ?? 'unknown',
-      ]);
-    }
-  }
-
-  private function mergeSettings(array $element_settings): array {
-    $keys = ['client_id', 'client_secret', 'merchant_code', 'environment', 'currency', 'timeout', 'order_id_prefix'];
-    $settings = [];
-
-    foreach ($keys as $key) {
-      $settings[$key] = $element_settings[$key] ?? $this->getConfig($key);
-    }
-
-    return $settings;
-  }
-
-  private function generateOrderId(string $prefix = 'WF_'): string {
-    return $prefix . time() . '_' . substr(uniqid(), -6);
-  }
-
-  private function getEndpoint(string $type): string {
-    $environment = $this->getConfig('environment', 'sandbox');
-    return self::API_ENDPOINTS[$environment][$type];
-  }
-
-  private function getConfig(string $key, $default = NULL) {
-    return $this->configFactory->get('webform_securepay.settings')->get($key) ?? $default;
   }
 }

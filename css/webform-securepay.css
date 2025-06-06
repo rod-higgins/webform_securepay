@@ -1,18 +1,29 @@
-/* Modern SecurePay Webform Element Styles */
+/* SecurePay Webform Element - Simplified Styles */
 
+:root {
+  --securepay-primary: #007cba;
+  --securepay-success: #28a745;
+  --securepay-error: #dc3545;
+  --securepay-warning: #ffc107;
+  --securepay-border: #e1e5e9;
+  --securepay-radius: 8px;
+  --securepay-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  --securepay-transition: all 0.3s ease;
+}
+
+/* Main Container */
 .webform-securepay-element {
-  border: 1px solid #e1e5e9;
-  border-radius: 8px;
-  padding: 20px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
+  border: 1px solid var(--securepay-border);
+  border-radius: var(--securepay-radius);
+  padding: 1.5rem;
+  background: #fff;
+  box-shadow: var(--securepay-shadow);
+  transition: var(--securepay-transition);
   position: relative;
-  overflow: hidden;
 }
 
 .webform-securepay-element:hover {
-  border-color: #007cba;
+  border-color: var(--securepay-primary);
   box-shadow: 0 4px 20px rgba(0, 124, 186, 0.1);
 }
 
@@ -21,58 +32,18 @@
   pointer-events: none;
 }
 
-.webform-securepay-element.loading::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
-  animation: loading-shimmer 1.5s infinite;
-}
-
-@keyframes loading-shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
 .webform-securepay-element.ready {
-  border-color: #28a745;
-  background: linear-gradient(135deg, #f8fff9 0%, #ffffff 100%);
-}
-
-/* Title and Description */
-.webform-securepay-title {
-  font-weight: 600;
-  font-size: 1.2em;
-  color: #2c3e50;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-}
-
-.webform-securepay-title::before {
-  content: '🔒';
-  margin-right: 8px;
-  font-size: 1em;
-}
-
-.webform-securepay-description {
-  margin-bottom: 20px;
-  color: #6c757d;
-  font-size: 0.95em;
-  line-height: 1.5;
+  border-color: var(--securepay-success);
 }
 
 /* SecurePay UI Container */
 .securepay-ui-container {
-  margin: 15px 0;
+  margin: 1rem 0;
   min-height: 200px;
-  border: 2px dashed #dee2e6;
-  border-radius: 6px;
-  background: #ffffff;
-  transition: all 0.3s ease;
+  border: 2px dashed var(--securepay-border);
+  border-radius: var(--securepay-radius);
+  background: #fafafa;
+  transition: var(--securepay-transition);
   position: relative;
 }
 
@@ -82,43 +53,37 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #adb5bd;
+  color: #6c757d;
   font-style: italic;
+  text-align: center;
 }
 
 .securepay-ui-container iframe {
   width: 100%;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--securepay-radius);
 }
 
-/* Payment Buttons */
+/* Buttons */
 .webform-securepay-button {
-  background: linear-gradient(135deg, #007cba 0%, #0056b3 100%);
+  background: linear-gradient(135deg, var(--securepay-primary) 0%, #0056b3 100%);
   color: white;
-  padding: 12px 24px;
+  padding: 0.75rem 1.5rem;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--securepay-radius);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 500;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
+  transition: var(--securepay-transition);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  box-shadow: 0 2px 8px rgba(0, 124, 186, 0.3);
+  min-width: 150px;
 }
 
-.webform-securepay-button:hover {
+.webform-securepay-button:hover:not(:disabled) {
   background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 124, 186, 0.4);
-}
-
-.webform-securepay-button:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 6px rgba(0, 124, 186, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 124, 186, 0.3);
 }
 
 .webform-securepay-button:disabled {
@@ -130,12 +95,7 @@
 }
 
 .webform-securepay-button.processing {
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.02); }
+  position: relative;
 }
 
 .webform-securepay-button.processing::after {
@@ -153,39 +113,37 @@
 }
 
 @keyframes spin {
-  0% { transform: translateY(-50%) rotate(0deg); }
-  100% { transform: translateY(-50%) rotate(360deg); }
+  to { transform: translateY(-50%) rotate(360deg); }
 }
 
 .webform-securepay-button.invalid {
-  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+  background: linear-gradient(135deg, var(--securepay-error) 0%, #c82333 100%);
 }
 
 /* Reset Button */
 .webform-securepay-reset {
-  background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
+  background: #6c757d;
   color: white;
-  padding: 10px 20px;
+  padding: 0.5rem 1rem;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--securepay-radius);
   cursor: pointer;
-  font-size: 14px;
-  margin-left: 10px;
-  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  margin-left: 0.5rem;
+  transition: var(--securepay-transition);
 }
 
 .webform-securepay-reset:hover {
-  background: linear-gradient(135deg, #5a6268 0%, #494f54 100%);
+  background: #5a6268;
   transform: translateY(-1px);
 }
 
 /* Results Display */
 .webform-securepay-result {
-  margin-top: 20px;
-  padding: 15px;
-  border-radius: 6px;
-  font-size: 14px;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: var(--securepay-radius);
+  font-size: 0.9rem;
   animation: fadeIn 0.5s ease;
 }
 
@@ -195,35 +153,33 @@
 }
 
 .webform-securepay-result.success {
-  background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+  background: #d4edda;
   border: 1px solid #c3e6cb;
   color: #155724;
 }
 
 .webform-securepay-result.error {
-  background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+  background: #f8d7da;
   border: 1px solid #f5c6cb;
   color: #721c24;
 }
 
-.webform-securepay-result .transaction-id,
-.webform-securepay-result .status,
-.webform-securepay-result .amount {
-  margin-bottom: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+.webform-securepay-result .success-message,
+.webform-securepay-result .error-message {
+  display: flex;
+  align-items: flex-start;
 }
 
-.webform-securepay-result .transaction-id:last-child,
-.webform-securepay-result .status:last-child,
-.webform-securepay-result .amount:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
+.webform-securepay-result .success-message::before {
+  content: '✅';
+  margin-right: 0.5rem;
+  flex-shrink: 0;
 }
 
-.webform-securepay-result strong {
-  font-weight: 600;
-  margin-right: 8px;
+.webform-securepay-result .error-message::before {
+  content: '❌';
+  margin-right: 0.5rem;
+  flex-shrink: 0;
 }
 
 /* Loading Indicator */
@@ -233,12 +189,12 @@
   left: 50%;
   transform: translate(-50%, -50%);
   background: rgba(255, 255, 255, 0.95);
-  padding: 15px 25px;
+  padding: 1rem 1.5rem;
   border-radius: 25px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
-  font-size: 14px;
+  font-size: 0.9rem;
   color: #495057;
   font-weight: 500;
   z-index: 10;
@@ -249,122 +205,22 @@
   width: 20px;
   height: 20px;
   border: 2px solid #e9ecef;
-  border-top: 2px solid #007cba;
+  border-top: 2px solid var(--securepay-primary);
   border-radius: 50%;
-  margin-right: 10px;
+  margin-right: 0.75rem;
   animation: spin 1s linear infinite;
-}
-
-/* Card Type Display */
-.card-type-display {
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-left: 10px;
-}
-
-.card-type-display.card-type-visa {
-  background: #1a1f71;
-  color: white;
-}
-
-.card-type-display.card-type-mastercard {
-  background: #eb001b;
-  color: white;
-}
-
-.card-type-display.card-type-amex {
-  background: #006fcf;
-  color: white;
-}
-
-.card-type-display.card-type-diners {
-  background: #0079be;
-  color: white;
-}
-
-.card-type-display.card-type-unknown {
-  background: #6c757d;
-  color: white;
-}
-
-/* DCC Options */
-.dcc-options {
-  margin: 15px 0;
-  padding: 15px;
-  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-  border: 1px solid #ffeaa7;
-  border-radius: 6px;
-  animation: slideDown 0.5s ease;
-}
-
-@keyframes slideDown {
-  from { 
-    opacity: 0; 
-    transform: translateY(-10px); 
-    max-height: 0;
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0); 
-    max-height: 200px;
-  }
-}
-
-.dcc-options h4 {
-  margin: 0 0 10px 0;
-  color: #856404;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.dcc-options p {
-  margin: 5px 0;
-  color: #856404;
-  font-size: 14px;
-}
-
-/* 3DS2 Challenge Frame */
-#3ds-v2-challenge-iframe {
-  border: 1px solid #dee2e6;
-  border-radius: 6px;
-  margin: 15px 0;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-/* Error Messages */
-.error-message {
-  color: #dc3545;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-}
-
-.error-message::before {
-  content: '⚠️';
-  margin-right: 8px;
-}
-
-/* Success Messages */
-.webform-securepay-result.success .transaction-id::before {
-  content: '✅';
-  margin-right: 8px;
 }
 
 /* Responsive Design */
 @media (max-width: 768px) {
   .webform-securepay-element {
-    padding: 15px;
-    margin: 10px 0;
+    padding: 1rem;
+    margin: 0.5rem 0;
   }
   
   .webform-securepay-button {
     width: 100%;
-    margin-bottom: 10px;
+    margin-bottom: 0.5rem;
   }
   
   .webform-securepay-reset {
@@ -377,23 +233,7 @@
   }
 }
 
-@media (max-width: 480px) {
-  .webform-securepay-title {
-    font-size: 1.1em;
-  }
-  
-  .webform-securepay-button {
-    padding: 14px 20px;
-    font-size: 15px;
-  }
-  
-  .loading-indicator {
-    padding: 12px 20px;
-    font-size: 13px;
-  }
-}
-
-/* High contrast mode support */
+/* High Contrast Mode */
 @media (prefers-contrast: high) {
   .webform-securepay-element {
     border: 2px solid #000;
@@ -405,45 +245,26 @@
     border: 2px solid #000;
   }
   
-  .webform-securepay-button:hover {
+  .webform-securepay-button:hover:not(:disabled) {
     background: #333;
   }
 }
 
-/* Reduced motion support */
+/* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
-  .webform-securepay-element,
-  .webform-securepay-button,
-  .webform-securepay-result,
-  .loading-indicator,
-  .dcc-options {
-    transition: none;
-    animation: none;
-  }
-  
-  .webform-securepay-button.processing::after {
-    animation: none;
-  }
-  
-  .loading-indicator::before {
-    animation: none;
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
-/* Dark mode support */
+/* Dark Mode */
 @media (prefers-color-scheme: dark) {
   .webform-securepay-element {
-    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    background: #2c3e50;
     border-color: #495057;
     color: #fff;
-  }
-  
-  .webform-securepay-title {
-    color: #fff;
-  }
-  
-  .webform-securepay-description {
-    color: #adb5bd;
   }
   
   .securepay-ui-container {
@@ -452,19 +273,19 @@
   }
   
   .webform-securepay-result.success {
-    background: linear-gradient(135deg, #155724 0%, #1e7e34 100%);
-    border-color: #28a745;
+    background: #155724;
+    border-color: var(--securepay-success);
     color: #d4edda;
   }
   
   .webform-securepay-result.error {
-    background: linear-gradient(135deg, #721c24 0%, #a71e2a 100%);
-    border-color: #dc3545;
+    background: #721c24;
+    border-color: var(--securepay-error);
     color: #f8d7da;
   }
 }
 
-/* Print styles */
+/* Print Styles */
 @media print {
   .webform-securepay-element {
     border: 1px solid #000;
