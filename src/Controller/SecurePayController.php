@@ -4,7 +4,9 @@ namespace Drupal\webform_securepay\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
-use Drupal\webform_securepay\Service\SecurePayApiService;
+use Drupal\webform_securepay\Service\SecurePayApiServiceInterface;
+use Drupal\webform_securepay\Service\ConfigurationService;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -15,18 +17,42 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class SecurePayController extends ControllerBase implements ContainerInjectionInterface {
 
+  // HTTP status codes
+  private const HTTP_OK = 200;
+  private const HTTP_BAD_REQUEST = 400;
+  private const HTTP_FORBIDDEN = 403;
+  private const HTTP_NOT_FOUND = 404;
+  private const HTTP_INTERNAL_ERROR = 500;
+
+  // Required payment fields
+  private const REQUIRED_PAYMENT_FIELDS = ['token', 'amount'];
+
   /**
    * The SecurePay API service.
-   *
-   * @var \Drupal\webform_securepay\Service\SecurePayApiService
    */
-  protected $securePayApi;
+  protected SecurePayApiServiceInterface $securePayApi;
+
+  /**
+   * The configuration service.
+   */
+  protected ConfigurationService $configService;
+
+  /**
+   * The logger.
+   */
+  protected LoggerInterface $logger;
 
   /**
    * Constructs a SecurePayController object.
    */
-  public function __construct(SecurePayApiService $securepay_api) {
+  public function __construct(
+    SecurePayApiServiceInterface $securepay_api,
+    ConfigurationService $config_service,
+    LoggerInterface $logger
+  ) {
     $this->securePayApi = $securepay_api;
+    $this->configService = $config_service;
+    $this->logger = $logger;
   }
 
   /**
@@ -34,142 +60,94 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
    */
   public static function create(ContainerInterface $container) {
     return new static(
-      $container->get('webform_securepay.api')
+      $container->get('webform_securepay.api'),
+      $container->get('webform_securepay.configuration'),
+      $container->get('logger.factory')->get('webform_securepay')
     );
   }
 
   /**
    * Handle payment callback from JavaScript.
    */
-  public function paymentCallback(Request $request) {
-    $content = $request->getContent();
-    
-    if (empty($content)) {
-      return new JsonResponse(['error' => 'Invalid request'], 400);
-    }
-    
+  public function paymentCallback(Request $request): JsonResponse {
     try {
-      $data = json_decode($content, TRUE);
+      $data = $this->parseJsonRequest($request);
+      $this->validatePaymentData($data);
       
-      if (json_last_error() !== JSON_ERROR_NONE) {
-        return new JsonResponse(['error' => 'Invalid JSON'], 400);
-      }
-      
-      // Validate required fields
-      $required_fields = ['token', 'amount'];
-      foreach ($required_fields as $field) {
-        if (empty($data[$field])) {
-          return new JsonResponse(['error' => "Missing required field: $field"], 400);
-        }
-      }
-      
-      // Prepare payment data
-      $payment_data = [
-        'token' => $data['token'],
-        'amount' => $data['amount'],
-        'ip' => $request->getClientIp(),
-      ];
-      
-      // Add optional fields
-      $optional_fields = [
-        'customer_code', 'currency', 'order_id', 
-        'threed_secure_details', 'dcc_details', 'fraud_check_details'
-      ];
-      
-      foreach ($optional_fields as $field) {
-        if (!empty($data[$field])) {
-          $payment_data[$field] = $data[$field];
-        }
-      }
+      $payment_data = $this->preparePaymentData($data, $request);
       
       // Process fraud check if enabled
       if (!empty($data['fraud_check_enabled'])) {
         $fraud_result = $this->processFraudCheck($payment_data);
         if (!$fraud_result['success']) {
-          return new JsonResponse([
-            'success' => FALSE,
-            'error' => 'Payment blocked by fraud detection',
+          return $this->createErrorResponse('Payment blocked by fraud detection', [
             'fraud_result' => $fraud_result,
           ]);
         }
         $payment_data['fraud_check_details'] = $fraud_result['details'];
       }
       
-      // Process the payment
       $result = $this->securePayApi->processPayment($payment_data);
       
-      // Log the transaction
       $this->logTransaction($payment_data, $result);
-      
-      // Send notifications if enabled
       $this->sendNotifications($result);
       
       return new JsonResponse($result);
-      
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Payment callback error: @message', [
+    }
+    catch (\InvalidArgumentException $e) {
+      return $this->createErrorResponse($e->getMessage(), [], self::HTTP_BAD_REQUEST);
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Payment callback error: @message', [
         '@message' => $e->getMessage(),
       ]);
       
-      return new JsonResponse([
-        'success' => FALSE,
-        'error' => 'Payment processing failed',
-      ], 500);
+      return $this->createErrorResponse('Payment processing failed', [], self::HTTP_INTERNAL_ERROR);
     }
   }
 
   /**
    * Handle webhook notifications from SecurePay.
    */
-  public function webhook(Request $request) {
-    $config = $this->config('webform_securepay.settings');
-    
-    if (!$config->get('webhook_enabled')) {
-      return new Response('Webhook not enabled', 404);
-    }
-    
-    // Verify webhook signature
-    $signature = $request->headers->get('X-SecurePay-Signature');
-    $webhook_secret = $config->get('webhook_secret');
-    
-    if (!$this->verifyWebhookSignature($request->getContent(), $signature, $webhook_secret)) {
-      $this->getLogger('webform_securepay')->warning('Invalid webhook signature');
-      return new Response('Invalid signature', 403);
+  public function webhook(Request $request): Response {
+    if (!$this->configService->get('webhook_enabled')) {
+      return new Response('Webhook not enabled', self::HTTP_NOT_FOUND);
     }
     
     try {
-      $data = json_decode($request->getContent(), TRUE);
-      
-      if (json_last_error() !== JSON_ERROR_NONE) {
-        return new Response('Invalid JSON', 400);
-      }
-      
-      // Process webhook event
+      $this->verifyWebhookSignature($request);
+      $data = $this->parseJsonRequest($request);
       $this->processWebhookEvent($data);
       
-      return new Response('OK', 200);
-      
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Webhook processing error: @message', [
+      return new Response('OK', self::HTTP_OK);
+    }
+    catch (\InvalidArgumentException $e) {
+      $this->logger->warning('Invalid webhook: @message', ['@message' => $e->getMessage()]);
+      return new Response($e->getMessage(), self::HTTP_BAD_REQUEST);
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Webhook processing error: @message', [
         '@message' => $e->getMessage(),
       ]);
       
-      return new Response('Processing failed', 500);
+      return new Response('Processing failed', self::HTTP_INTERNAL_ERROR);
     }
   }
 
   /**
    * Test connection to SecurePay API.
    */
-  public function testConnection() {
+  public function testConnection(): Response {
     try {
-      if ($this->securePayApi->testConnection()) {
-        $this->messenger()->addMessage($this->t('SecurePay connection test successful.'));
-      } else {
-        $this->messenger()->addError($this->t('SecurePay connection test failed.'));
-      }
-    } catch (\Exception $e) {
-      $this->messenger()->addError($this->t('SecurePay connection test failed: @error', [
+      $success = $this->securePayApi->testConnection();
+      $message = $success 
+        ? $this->t('SecurePay connection test successful.')
+        : $this->t('SecurePay connection test failed.');
+      
+      $this->messenger()->addMessage($message, $success ? 'status' : 'error');
+    }
+    catch (\Exception $e) {
+      $this->messenger()->addError($this->t('Connection test failed: @error', [
         '@error' => $e->getMessage(),
       ]));
     }
@@ -180,127 +158,167 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
   /**
    * Initiate payment order endpoint.
    */
-  public function initiatePaymentOrder(Request $request) {
-    $content = $request->getContent();
-    
-    if (empty($content)) {
-      return new JsonResponse(['error' => 'Invalid request'], 400);
-    }
-    
+  public function initiatePaymentOrder(Request $request): JsonResponse {
     try {
-      $data = json_decode($content, TRUE);
-      
-      if (json_last_error() !== JSON_ERROR_NONE) {
-        return new JsonResponse(['error' => 'Invalid JSON'], 400);
-      }
+      $data = $this->parseJsonRequest($request);
       
       $amount = $data['amount'] ?? 0;
       $order_type = $data['order_type'] ?? 'DYNAMIC_CURRENCY_CONVERSION';
       $order_reference = $data['order_reference'] ?? NULL;
       
       if ($amount <= 0) {
-        return new JsonResponse(['error' => 'Invalid amount'], 400);
+        return $this->createErrorResponse('Invalid amount', [], self::HTTP_BAD_REQUEST);
       }
       
       $result = $this->securePayApi->initiatePaymentOrder($amount, $order_type, $order_reference);
       
-      if ($result) {
-        return new JsonResponse($result);
-      } else {
-        return new JsonResponse(['error' => 'Failed to initiate payment order'], 500);
-      }
-      
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Initiate payment order error: @message', [
+      return $result 
+        ? new JsonResponse($result)
+        : $this->createErrorResponse('Failed to initiate payment order', [], self::HTTP_INTERNAL_ERROR);
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Initiate payment order error: @message', [
         '@message' => $e->getMessage(),
       ]);
       
-      return new JsonResponse(['error' => 'Failed to initiate payment order'], 500);
+      return $this->createErrorResponse('Failed to initiate payment order', [], self::HTTP_INTERNAL_ERROR);
     }
   }
 
   /**
    * Process refund endpoint.
    */
-  public function processRefund(Request $request, $order_id) {
-    $content = $request->getContent();
-    
-    if (empty($content)) {
-      return new JsonResponse(['error' => 'Invalid request'], 400);
-    }
-    
+  public function processRefund(Request $request, string $order_id): JsonResponse {
     try {
-      $data = json_decode($content, TRUE);
-      
-      if (json_last_error() !== JSON_ERROR_NONE) {
-        return new JsonResponse(['error' => 'Invalid JSON'], 400);
-      }
+      $data = $this->parseJsonRequest($request);
       
       $amount = $data['amount'] ?? 0;
       $merchant_code = $data['merchant_code'] ?? NULL;
       
       if ($amount <= 0) {
-        return new JsonResponse(['error' => 'Invalid amount'], 400);
+        return $this->createErrorResponse('Invalid amount', [], self::HTTP_BAD_REQUEST);
       }
       
       $result = $this->securePayApi->refundPayment($order_id, $amount, $merchant_code);
       
       if ($result) {
-        // Log the refund
         $this->logRefund($order_id, $amount, $result);
-        
         return new JsonResponse($result);
-      } else {
-        return new JsonResponse(['error' => 'Failed to process refund'], 500);
       }
       
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Refund processing error: @message', [
+      return $this->createErrorResponse('Failed to process refund', [], self::HTTP_INTERNAL_ERROR);
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Refund processing error: @message', [
         '@message' => $e->getMessage(),
       ]);
       
-      return new JsonResponse(['error' => 'Failed to process refund'], 500);
+      return $this->createErrorResponse('Failed to process refund', [], self::HTTP_INTERNAL_ERROR);
     }
   }
 
   /**
    * Get payment status endpoint.
    */
-  public function getPaymentStatus($order_id) {
+  public function getPaymentStatus(string $order_id): JsonResponse {
+    // This would require implementing a payment status retrieval method
+    return new JsonResponse([
+      'order_id' => $order_id,
+      'status' => 'not_implemented',
+      'message' => 'Payment status retrieval not yet implemented',
+    ]);
+  }
+
+  /**
+   * Health check endpoint.
+   */
+  public function healthCheck(): JsonResponse {
     try {
-      // This would require implementing a payment status retrieval method
-      // in the SecurePayApiService for the given order_id
+      $api_status = $this->securePayApi->testConnection();
+      $config_status = $this->configService->isConfigured();
       
       return new JsonResponse([
-        'order_id' => $order_id,
-        'status' => 'not_implemented',
-        'message' => 'Payment status retrieval not yet implemented',
+        'status' => $api_status && $config_status ? 'healthy' : 'unhealthy',
+        'api_connection' => $api_status,
+        'configuration' => $config_status,
+        'timestamp' => time(),
       ]);
-      
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Payment status error: @message', [
-        '@message' => $e->getMessage(),
-      ]);
-      
-      return new JsonResponse(['error' => 'Failed to get payment status'], 500);
     }
+    catch (\Exception $e) {
+      return new JsonResponse([
+        'status' => 'error',
+        'message' => $e->getMessage(),
+        'timestamp' => time(),
+      ], self::HTTP_INTERNAL_ERROR);
+    }
+  }
+
+  /**
+   * Parse JSON request data.
+   */
+  protected function parseJsonRequest(Request $request): array {
+    $content = $request->getContent();
+    
+    if (empty($content)) {
+      throw new \InvalidArgumentException('Invalid request');
+    }
+    
+    $data = json_decode($content, TRUE);
+    
+    if (json_last_error() !== JSON_ERROR_NONE) {
+      throw new \InvalidArgumentException('Invalid JSON');
+    }
+    
+    return $data;
+  }
+
+  /**
+   * Validate payment data.
+   */
+  protected function validatePaymentData(array $data): void {
+    foreach (self::REQUIRED_PAYMENT_FIELDS as $field) {
+      if (empty($data[$field])) {
+        throw new \InvalidArgumentException("Missing required field: {$field}");
+      }
+    }
+  }
+
+  /**
+   * Prepare payment data.
+   */
+  protected function preparePaymentData(array $data, Request $request): array {
+    $payment_data = [
+      'token' => $data['token'],
+      'amount' => $data['amount'],
+      'ip' => $request->getClientIp(),
+    ];
+    
+    $optional_fields = [
+      'customer_code', 'currency', 'order_id',
+      'threed_secure_details', 'dcc_details', 'fraud_check_details',
+    ];
+    
+    foreach ($optional_fields as $field) {
+      if (!empty($data[$field])) {
+        $payment_data[$field] = $data[$field];
+      }
+    }
+    
+    return $payment_data;
   }
 
   /**
    * Process fraud check.
    */
-  protected function processFraudCheck(array $payment_data) {
-    $config = $this->config('webform_securepay.settings');
-    $fraud_check_type = $config->get('fraud_check_type');
+  protected function processFraudCheck(array $payment_data): array {
+    $fraud_check_type = $this->configService->get('fraud_check_type');
     
     if (empty($fraud_check_type)) {
       return ['success' => TRUE];
     }
     
     try {
-      // This would require implementing fraud check methods
-      // in the SecurePayApiService
-      
+      // Placeholder for fraud check implementation
       return [
         'success' => TRUE,
         'details' => [
@@ -309,9 +327,9 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
           'result' => 'PASSED',
         ],
       ];
-      
-    } catch (\Exception $e) {
-      $this->getLogger('webform_securepay')->error('Fraud check error: @message', [
+    }
+    catch (\Exception $e) {
+      $this->logger->error('Fraud check error: @message', [
         '@message' => $e->getMessage(),
       ]);
       
@@ -325,118 +343,95 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
   /**
    * Verify webhook signature.
    */
-  protected function verifyWebhookSignature($payload, $signature, $secret) {
-    if (empty($signature) || empty($secret)) {
-      return FALSE;
+  protected function verifyWebhookSignature(Request $request): void {
+    $signature = $request->headers->get('X-SecurePay-Signature');
+    $webhook_secret = $this->configService->get('webhook_secret');
+    
+    if (empty($signature) || empty($webhook_secret)) {
+      throw new \InvalidArgumentException('Invalid signature');
     }
     
-    $expected_signature = hash_hmac('sha256', $payload, $secret);
+    $expected_signature = hash_hmac('sha256', $request->getContent(), $webhook_secret);
     
-    return hash_equals($expected_signature, $signature);
+    if (!hash_equals($expected_signature, $signature)) {
+      throw new \InvalidArgumentException('Invalid signature');
+    }
   }
 
   /**
    * Process webhook event.
    */
-  protected function processWebhookEvent(array $data) {
+  protected function processWebhookEvent(array $data): void {
     $event_type = $data['event_type'] ?? 'unknown';
     
-    switch ($event_type) {
-      case 'payment.success':
-        $this->handlePaymentSuccessWebhook($data);
-        break;
-        
-      case 'payment.failed':
-        $this->handlePaymentFailedWebhook($data);
-        break;
-        
-      case 'refund.processed':
-        $this->handleRefundWebhook($data);
-        break;
-        
-      case 'chargeback.received':
-        $this->handleChargebackWebhook($data);
-        break;
-        
-      default:
-        $this->getLogger('webform_securepay')->info('Unknown webhook event type: @type', [
-          '@type' => $event_type,
-        ]);
+    $event_handlers = [
+      'payment.success' => 'handlePaymentSuccessWebhook',
+      'payment.failed' => 'handlePaymentFailedWebhook',
+      'refund.processed' => 'handleRefundWebhook',
+      'chargeback.received' => 'handleChargebackWebhook',
+    ];
+    
+    if (isset($event_handlers[$event_type])) {
+      $this->{$event_handlers[$event_type]}($data);
+    } else {
+      $this->logger->info('Unknown webhook event type: @type', ['@type' => $event_type]);
     }
   }
 
   /**
    * Handle payment success webhook.
    */
-  protected function handlePaymentSuccessWebhook(array $data) {
-    $this->getLogger('webform_securepay')->info('Payment success webhook received for order: @order_id', [
+  protected function handlePaymentSuccessWebhook(array $data): void {
+    $this->logger->info('Payment success webhook received for order: @order_id', [
       '@order_id' => $data['order_id'] ?? 'unknown',
     ]);
-    
-    // Update payment status in database if needed
-    // Send confirmation emails
-    // Trigger any post-payment processing
   }
 
   /**
    * Handle payment failed webhook.
    */
-  protected function handlePaymentFailedWebhook(array $data) {
-    $this->getLogger('webform_securepay')->warning('Payment failed webhook received for order: @order_id', [
+  protected function handlePaymentFailedWebhook(array $data): void {
+    $this->logger->warning('Payment failed webhook received for order: @order_id', [
       '@order_id' => $data['order_id'] ?? 'unknown',
     ]);
-    
-    // Update payment status
-    // Send failure notifications
   }
 
   /**
    * Handle refund webhook.
    */
-  protected function handleRefundWebhook(array $data) {
-    $this->getLogger('webform_securepay')->info('Refund webhook received for order: @order_id', [
+  protected function handleRefundWebhook(array $data): void {
+    $this->logger->info('Refund webhook received for order: @order_id', [
       '@order_id' => $data['order_id'] ?? 'unknown',
     ]);
-    
-    // Update refund status
-    // Send refund confirmation
   }
 
   /**
    * Handle chargeback webhook.
    */
-  protected function handleChargebackWebhook(array $data) {
-    $this->getLogger('webform_securepay')->warning('Chargeback webhook received for order: @order_id', [
+  protected function handleChargebackWebhook(array $data): void {
+    $this->logger->warning('Chargeback webhook received for order: @order_id', [
       '@order_id' => $data['order_id'] ?? 'unknown',
     ]);
-    
-    // Log chargeback
-    // Send alerts to administrators
-    // Update accounting records
   }
 
   /**
    * Log transaction.
    */
-  protected function logTransaction(array $payment_data, array $result) {
-    $config = $this->config('webform_securepay.settings');
-    
-    if ($config->get('log_transactions')) {
-      $this->getLogger('webform_securepay')->info('Transaction processed: @order_id - @status - @amount', [
+  protected function logTransaction(array $payment_data, array $result): void {
+    if ($this->configService->get('log_transactions')) {
+      $this->logger->info('Transaction processed: @order_id - @status - @amount', [
         '@order_id' => $result['transaction_id'] ?? 'unknown',
         '@status' => $result['status'] ?? 'unknown',
         '@amount' => $payment_data['amount'] ?? '0',
       ]);
     }
-    
-    // Store in database if needed for reporting/reconciliation
   }
 
   /**
    * Log refund.
    */
-  protected function logRefund($order_id, $amount, array $result) {
-    $this->getLogger('webform_securepay')->info('Refund processed: @order_id - @amount - @status', [
+  protected function logRefund(string $order_id, int $amount, array $result): void {
+    $this->logger->info('Refund processed: @order_id - @amount - @status', [
       '@order_id' => $order_id,
       '@amount' => $amount,
       '@status' => $result['status'] ?? 'unknown',
@@ -446,14 +441,12 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
   /**
    * Send notifications.
    */
-  protected function sendNotifications(array $result) {
-    $config = $this->config('webform_securepay.settings');
-    
-    if (!$config->get('email_notifications')) {
+  protected function sendNotifications(array $result): void {
+    if (!$this->configService->get('email_notifications')) {
       return;
     }
     
-    $notification_email = $config->get('notification_email');
+    $notification_email = $this->configService->get('notification_email');
     if (empty($notification_email)) {
       return;
     }
@@ -472,6 +465,18 @@ class SecurePayController extends ControllerBase implements ContainerInjectionIn
       \Drupal::currentUser()->getPreferredLangcode(),
       $params
     );
+  }
+
+  /**
+   * Create error response.
+   */
+  protected function createErrorResponse(string $message, array $additional_data = [], int $status_code = self::HTTP_BAD_REQUEST): JsonResponse {
+    $data = [
+      'success' => FALSE,
+      'error' => $message,
+    ] + $additional_data;
+    
+    return new JsonResponse($data, $status_code);
   }
 
 }
