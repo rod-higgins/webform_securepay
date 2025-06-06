@@ -1,584 +1,422 @@
 (function ($, Drupal, drupalSettings) {
   'use strict';
 
+  /**
+   * SecurePay Webform Integration
+   */
   Drupal.behaviors.webformSecurePay = {
     attach: function (context, settings) {
       $('.webform-securepay-element', context).once('webform-securepay').each(function () {
-        var $element = $(this);
-        var elementSettings = settings.webformSecurePay || {};
-        var $container = $element.find('.securepay-ui-container');
-        var containerId = $container.attr('id');
-        
-        if (!containerId) {
-          console.error('SecurePay: Container ID not found');
-          return;
-        }
-
-        // Initialize SecurePay UI Component
-        initializeSecurePayUI($element, elementSettings, containerId);
+        new SecurePayElement($(this), settings.webformSecurePay || {});
       });
     }
   };
 
   /**
-   * Initialize SecurePay UI Component with all callbacks and configuration.
+   * SecurePay Element Class
    */
-  function initializeSecurePayUI($element, settings, containerId) {
-    // Wait for SecurePay script to load
-    if (typeof securePayUI === 'undefined') {
-      setTimeout(function() {
-        initializeSecurePayUI($element, settings, containerId);
-      }, 100);
-      return;
+  class SecurePayElement {
+    constructor($element, settings) {
+      this.$element = $element;
+      this.settings = settings;
+      this.$container = $element.find('.securepay-ui-container');
+      this.containerId = this.$container.attr('id');
+      this.securePayInstance = null;
+      
+      if (!this.containerId) {
+        console.error('SecurePay: Container ID not found');
+        return;
+      }
+
+      this.initialize();
     }
 
-    try {
-      // Build UI configuration object with all available options
-      var uiConfig = {
-        containerId: containerId,
+    initialize() {
+      this.waitForSecurePayScript(() => {
+        this.initializeSecurePayUI();
+        this.setupEventHandlers();
+      });
+    }
+
+    waitForSecurePayScript(callback) {
+      if (typeof securePayUI !== 'undefined') {
+        callback();
+      } else {
+        setTimeout(() => this.waitForSecurePayScript(callback), 100);
+      }
+    }
+
+    initializeSecurePayUI() {
+      try {
+        const uiConfig = this.buildUIConfig();
+        this.securePayInstance = new securePayUI.init(uiConfig);
+        this.$element.data('securePayUIInstance', this.securePayInstance);
+        this.hideLoadingIndicator();
+      } catch (error) {
+        console.error('SecurePay: Failed to initialize UI Component', error);
+        this.displayError('Payment system unavailable. Please try again later.');
+      }
+    }
+
+    buildUIConfig() {
+      return {
+        containerId: this.containerId,
         scriptId: 'securepay-ui-js',
-        clientId: settings.clientId,
-        merchantCode: settings.merchantCode,
-        mode: settings.mode || 'checkout', // 'checkout' or 'dcc'
+        clientId: this.settings.clientId,
+        merchantCode: this.settings.merchantCode,
+        mode: this.settings.mode || 'checkout',
         
-        // Card configuration with all available options
         card: {
-          allowedCardTypes: settings.allowedCardTypes || ['visa', 'mastercard', 'amex', 'diners'],
-          showCardIcons: settings.showCardIcons !== false,
-          
-          // Card type change callback
-          onCardTypeChange: function(cardType) {
-            console.log('SecurePay: Card type changed to', cardType);
-            $element.trigger('securepay:cardTypeChange', [cardType]);
-            
-            // Update UI to show card type
-            updateCardTypeDisplay($element, cardType);
-          },
-          
-          // BIN change callback
-          onBINChange: function(cardBIN) {
-            console.log('SecurePay: Card BIN changed to', cardBIN);
-            $element.trigger('securepay:binChange', [cardBIN]);
-            
-            // Trigger BIN-specific logic (e.g., fraud checks)
-            handleBINChange($element, cardBIN, settings);
-          },
-          
-          // Form validity change callback
-          onFormValidityChange: function(valid) {
-            console.log('SecurePay: Form validity changed to', valid);
-            $element.trigger('securepay:formValidityChange', [valid]);
-            
-            // Enable/disable submit button based on form validity
-            updateSubmitButtonState($element, valid);
-          },
-          
-          // DCC quote success callback (for DCC mode)
-          onDCCQuoteSuccess: function(quote) {
-            console.log('SecurePay: DCC quote success', quote);
-            $element.trigger('securepay:dccQuoteSuccess', [quote]);
-            
-            // Display currency conversion options to user
-            displayDCCOptions($element, quote);
-            
-            // Enable tokenization after DCC quote
-            enableTokenization($element);
-          },
-          
-          // DCC quote error callback (for DCC mode)
-          onDCCQuoteError: function(errors) {
-            console.error('SecurePay: DCC quote error', errors);
-            $element.trigger('securepay:dccQuoteError', [errors]);
-            
-            // Display error message
-            displayError($element, 'Currency conversion unavailable. Please try again.');
-          },
-          
-          // Tokenise success callback
-          onTokeniseSuccess: function(tokenisedCard) {
-            console.log('SecurePay: Tokenisation successful', tokenisedCard);
-            $element.trigger('securepay:tokeniseSuccess', [tokenisedCard]);
-            
-            // Process the tokenised card data
-            processTokenisedCard($element, tokenisedCard, settings);
-          },
-          
-          // Tokenise error callback
-          onTokeniseError: function(errors) {
-            console.error('SecurePay: Tokenisation error', errors);
-            $element.trigger('securepay:tokeniseError', [errors]);
-            
-            // Display error messages
-            displayTokenisationErrors($element, errors);
-            
-            // Re-enable the payment button
-            resetPaymentButton($element);
-          }
+          allowedCardTypes: this.settings.allowedCardTypes || ['visa', 'mastercard', 'amex', 'diners'],
+          showCardIcons: this.settings.showCardIcons !== false,
+          onCardTypeChange: (cardType) => this.handleCardTypeChange(cardType),
+          onBINChange: (cardBIN) => this.handleBINChange(cardBIN),
+          onFormValidityChange: (valid) => this.updateSubmitButtonState(valid),
+          onDCCQuoteSuccess: (quote) => this.handleDCCQuoteSuccess(quote),
+          onDCCQuoteError: (errors) => this.handleDCCQuoteError(errors),
+          onTokeniseSuccess: (tokenisedCard) => this.handleTokeniseSuccess(tokenisedCard),
+          onTokeniseError: (errors) => this.handleTokeniseError(errors)
         },
         
-        // Style configuration with all available options
-        style: {
-          backgroundColor: settings.backgroundColor || 'rgba(255, 255, 255, 0.1)',
-          label: {
-            font: {
-              family: settings.labelFontFamily || 'Arial, Helvetica, sans-serif',
-              size: settings.labelFontSize || '1rem',
-              color: settings.labelColor || '#333'
-            }
-          },
-          input: {
-            font: {
-              family: settings.inputFontFamily || 'Arial, Helvetica, sans-serif',
-              size: settings.inputFontSize || '1rem',
-              color: settings.inputColor || '#333'
-            }
+        style: this.buildStyleConfig(),
+        checkoutInfo: this.buildCheckoutInfo(),
+        onLoadComplete: () => this.handleLoadComplete()
+      };
+    }
+
+    buildStyleConfig() {
+      return {
+        backgroundColor: this.settings.backgroundColor || 'rgba(255, 255, 255, 0.1)',
+        label: {
+          font: {
+            family: this.settings.labelFontFamily || 'Arial, Helvetica, sans-serif',
+            size: this.settings.labelFontSize || '1rem',
+            color: this.settings.labelColor || '#333'
           }
         },
-        
-        // Checkout info for DCC mode
-        checkoutInfo: settings.mode === 'dcc' && settings.orderToken ? {
-          orderToken: settings.orderToken
-        } : undefined,
-        
-        // Global load complete callback
-        onLoadComplete: function() {
-          console.log('SecurePay: UI Component loaded successfully');
-          $element.trigger('securepay:loadComplete');
-          
-          // Hide loading indicator
-          hideLoadingIndicator($element);
-          
-          // Enable the component
-          enableComponent($element);
-          
-          // Focus on first field if configured
-          if (settings.autoFocus) {
-            focusFirstField($element);
+        input: {
+          font: {
+            family: this.settings.inputFontFamily || 'Arial, Helvetica, sans-serif',
+            size: this.settings.inputFontSize || '1rem',
+            color: this.settings.inputColor || '#333'
           }
         }
       };
-
-      // Initialize the SecurePay UI Component
-      var securePayUIInstance = new securePayUI.init(uiConfig);
-      
-      // Store instance reference for later use
-      $element.data('securePayUIInstance', securePayUIInstance);
-      
-      // Set up payment button click handler
-      setupPaymentButton($element, securePayUIInstance, settings);
-      
-      // Set up reset button click handler
-      setupResetButton($element, securePayUIInstance);
-      
-      // Set up 3DS2 if enabled
-      if (settings.threeDSEnabled) {
-        setup3DS2($element, settings);
-      }
-      
-    } catch (error) {
-      console.error('SecurePay: Failed to initialize UI Component', error);
-      displayError($element, 'Payment system unavailable. Please try again later.');
     }
-  }
 
-  /**
-   * Set up payment button click handler.
-   */
-  function setupPaymentButton($element, securePayUIInstance, settings) {
-    var $button = $element.find('.webform-securepay-button');
-    
-    $button.on('click', function(e) {
-      e.preventDefault();
+    buildCheckoutInfo() {
+      if (this.settings.mode === 'dcc' && this.settings.orderToken) {
+        return { orderToken: this.settings.orderToken };
+      }
+      return undefined;
+    }
+
+    setupEventHandlers() {
+      this.setupPaymentButton();
+      this.setupResetButton();
       
-      // Disable button and show processing state
-      $button.prop('disabled', true);
-      $button.val(Drupal.t('Processing...'));
-      $button.addClass('processing');
+      if (this.settings.threeDSEnabled) {
+        this.setup3DS2();
+      }
+    }
+
+    setupPaymentButton() {
+      const $button = this.$element.find('.webform-securepay-button');
       
-      // Show loading indicator
-      showLoadingIndicator($element);
+      $button.on('click', (e) => {
+        e.preventDefault();
+        this.processPayment($button);
+      });
+    }
+
+    setupResetButton() {
+      const $resetButton = this.$element.find('.webform-securepay-reset');
       
-      // Clear previous results
-      clearResults($element);
+      if ($resetButton.length) {
+        $resetButton.on('click', (e) => {
+          e.preventDefault();
+          this.resetForm();
+        });
+      }
+    }
+
+    processPayment($button) {
+      this.setButtonProcessing($button, true);
+      this.showLoadingIndicator();
+      this.clearResults();
       
       try {
-        // Trigger tokenisation
-        securePayUIInstance.tokenise();
-        
-        $element.trigger('securepay:tokeniseInitiated');
-        
+        this.securePayInstance.tokenise();
+        this.$element.trigger('securepay:tokeniseInitiated');
       } catch (error) {
         console.error('SecurePay: Failed to tokenise', error);
-        displayError($element, 'Payment processing failed. Please try again.');
-        resetPaymentButton($element);
+        this.displayError('Payment processing failed. Please try again.');
+        this.setButtonProcessing($button, false);
       }
-    });
-  }
+    }
 
-  /**
-   * Set up reset button click handler.
-   */
-  function setupResetButton($element, securePayUIInstance) {
-    var $resetButton = $element.find('.webform-securepay-reset');
-    
-    if ($resetButton.length) {
-      $resetButton.on('click', function(e) {
-        e.preventDefault();
-        
-        try {
-          // Reset the form
-          securePayUIInstance.reset();
-          
-          // Clear results and reset UI
-          clearResults($element);
-          resetPaymentButton($element);
-          
-          $element.trigger('securepay:formReset');
-          
-        } catch (error) {
-          console.error('SecurePay: Failed to reset form', error);
+    resetForm() {
+      try {
+        this.securePayInstance.reset();
+        this.clearResults();
+        this.setButtonProcessing(this.$element.find('.webform-securepay-button'), false);
+        this.$element.trigger('securepay:formReset');
+      } catch (error) {
+        console.error('SecurePay: Failed to reset form', error);
+      }
+    }
+
+    // Event Handlers
+    handleCardTypeChange(cardType) {
+      console.log('SecurePay: Card type changed to', cardType);
+      this.$element.trigger('securepay:cardTypeChange', [cardType]);
+      this.updateCardTypeDisplay(cardType);
+    }
+
+    handleBINChange(cardBIN) {
+      console.log('SecurePay: Card BIN changed to', cardBIN);
+      this.$element.trigger('securepay:binChange', [cardBIN]);
+    }
+
+    handleDCCQuoteSuccess(quote) {
+      console.log('SecurePay: DCC quote success', quote);
+      this.$element.trigger('securepay:dccQuoteSuccess', [quote]);
+      this.displayDCCOptions(quote);
+    }
+
+    handleDCCQuoteError(errors) {
+      console.error('SecurePay: DCC quote error', errors);
+      this.$element.trigger('securepay:dccQuoteError', [errors]);
+      this.displayError('Currency conversion unavailable. Please try again.');
+    }
+
+    handleTokeniseSuccess(tokenisedCard) {
+      console.log('SecurePay: Tokenisation successful', tokenisedCard);
+      this.$element.trigger('securepay:tokeniseSuccess', [tokenisedCard]);
+      this.processTokenisedCard(tokenisedCard);
+    }
+
+    handleTokeniseError(errors) {
+      console.error('SecurePay: Tokenisation error', errors);
+      this.$element.trigger('securepay:tokeniseError', [errors]);
+      this.displayTokenisationErrors(errors);
+      this.setButtonProcessing(this.$element.find('.webform-securepay-button'), false);
+    }
+
+    handleLoadComplete() {
+      console.log('SecurePay: UI Component loaded successfully');
+      this.$element.trigger('securepay:loadComplete');
+      this.hideLoadingIndicator();
+      this.$element.removeClass('loading').addClass('ready');
+    }
+
+    // Payment Processing
+    processTokenisedCard(tokenisedCard) {
+      const paymentData = {
+        token: tokenisedCard.token,
+        amount: this.settings.amount,
+        merchantCode: tokenisedCard.merchantCode,
+        scheme: tokenisedCard.scheme,
+        last4: tokenisedCard.last4,
+        expiryMonth: tokenisedCard.expiryMonth,
+        expiryYear: tokenisedCard.expiryYear
+      };
+
+      if (tokenisedCard.dccQuote) {
+        paymentData.dccQuote = tokenisedCard.dccQuote;
+      }
+
+      $.ajax({
+        url: this.settings.paymentCallbackUrl || '/webform/securepay/callback',
+        method: 'POST',
+        data: JSON.stringify(paymentData),
+        contentType: 'application/json',
+        success: (response) => this.handlePaymentResponse(response),
+        error: () => {
+          console.error('SecurePay: Payment callback failed');
+          this.displayError('Payment processing failed. Please try again.');
+          this.setButtonProcessing(this.$element.find('.webform-securepay-button'), false);
         }
       });
     }
-  }
 
-  /**
-   * Process tokenised card data.
-   */
-  function processTokenisedCard($element, tokenisedCard, settings) {
-    var paymentData = {
-      token: tokenisedCard.token,
-      amount: settings.amount,
-      merchantCode: tokenisedCard.merchantCode,
-      scheme: tokenisedCard.scheme,
-      last4: tokenisedCard.last4,
-      expiryMonth: tokenisedCard.expiryMonth,
-      expiryYear: tokenisedCard.expiryYear
-    };
-
-    // Add DCC quote data if present
-    if (tokenisedCard.dccQuote) {
-      paymentData.dccQuote = tokenisedCard.dccQuote;
-    }
-
-    // Send to server for payment processing
-    $.ajax({
-      url: settings.paymentCallbackUrl || '/webform/securepay/callback',
-      method: 'POST',
-      data: JSON.stringify(paymentData),
-      contentType: 'application/json',
-      success: function(response) {
-        handlePaymentResponse($element, response);
-      },
-      error: function(xhr, status, error) {
-        console.error('SecurePay: Payment callback failed', error);
-        displayError($element, 'Payment processing failed. Please try again.');
-        resetPaymentButton($element);
+    handlePaymentResponse(response) {
+      if (response.success) {
+        this.displaySuccess(response);
+        this.$element.trigger('securepay:paymentSuccess', [response]);
+      } else {
+        this.displayError(response.error || 'Payment failed. Please try again.');
+        this.setButtonProcessing(this.$element.find('.webform-securepay-button'), false);
+        this.$element.trigger('securepay:paymentError', [response]);
       }
-    });
-  }
-
-  /**
-   * Handle payment response from server.
-   */
-  function handlePaymentResponse($element, response) {
-    if (response.success) {
-      displaySuccess($element, response);
-      $element.trigger('securepay:paymentSuccess', [response]);
-    } else {
-      displayError($element, response.error || 'Payment failed. Please try again.');
-      resetPaymentButton($element);
-      $element.trigger('securepay:paymentError', [response]);
     }
-  }
 
-  /**
-   * Display success message and results.
-   */
-  function displaySuccess($element, response) {
-    var $results = $element.find('.webform-securepay-result');
-    
-    $results.removeClass('error').addClass('success');
-    $results.html(
-      '<div class="transaction-id"><strong>' + Drupal.t('Transaction ID') + ':</strong> ' + response.transaction_id + '</div>' +
-      '<div class="status"><strong>' + Drupal.t('Status') + ':</strong> ' + response.status + '</div>' +
-      '<div class="amount"><strong>' + Drupal.t('Amount') + ':</strong> ' + formatAmount(response.amount, response.currency) + '</div>'
-    );
-    
-    $results.show();
-    hideLoadingIndicator($element);
-  }
-
-  /**
-   * Display error message.
-   */
-  function displayError($element, message) {
-    var $results = $element.find('.webform-securepay-result');
-    
-    $results.removeClass('success').addClass('error');
-    $results.html('<div class="error-message">' + message + '</div>');
-    $results.show();
-    
-    hideLoadingIndicator($element);
-  }
-
-  /**
-   * Display tokenisation errors.
-   */
-  function displayTokenisationErrors($element, errors) {
-    var errorMessages = [];
-    
-    if (Array.isArray(errors)) {
-      errors.forEach(function(error) {
-        errorMessages.push(error.detail || error.message || 'Unknown error');
-      });
-    } else if (errors.detail) {
-      errorMessages.push(errors.detail);
-    } else {
-      errorMessages.push('Tokenisation failed. Please check your card details.');
+    // UI Updates
+    updateCardTypeDisplay(cardType) {
+      const $cardType = this.$element.find('.card-type-display');
+      if ($cardType.length) {
+        $cardType.text(cardType.charAt(0).toUpperCase() + cardType.slice(1));
+        $cardType.removeClass().addClass('card-type-display card-type-' + cardType);
+      }
     }
-    
-    displayError($element, errorMessages.join(', '));
-  }
 
-  /**
-   * Update card type display.
-   */
-  function updateCardTypeDisplay($element, cardType) {
-    var $cardType = $element.find('.card-type-display');
-    
-    if ($cardType.length) {
-      $cardType.text(cardType.charAt(0).toUpperCase() + cardType.slice(1));
-      $cardType.removeClass().addClass('card-type-display card-type-' + cardType);
+    updateSubmitButtonState(valid) {
+      const $button = this.$element.find('.webform-securepay-button');
+      $button.prop('disabled', !valid).toggleClass('invalid', !valid);
     }
-  }
 
-  /**
-   * Handle BIN change for fraud detection or other BIN-specific logic.
-   */
-  function handleBINChange($element, cardBIN, settings) {
-    // You can implement BIN-specific logic here
-    // For example, fraud detection, card issuer identification, etc.
-    
-    if (settings.binCheckEnabled && cardBIN.length >= 6) {
-      // Perform BIN check or other validation
-      console.log('SecurePay: Performing BIN check for', cardBIN);
+    displayDCCOptions(quote) {
+      const $dccOptions = this.$element.find('.dcc-options');
+      if ($dccOptions.length && quote.converted) {
+        const html = `
+          <div class="dcc-option">
+            <h4>${Drupal.t('Currency Options')}</h4>
+            <p>${Drupal.t('You can pay in your card currency:')}</p>
+            <p><strong>${quote.converted.currency} ${this.formatAmount(quote.converted.amount, quote.converted.currency)}</strong></p>
+            <p>${Drupal.t('Exchange rate: 1 AUD = @rate @currency', {
+              '@rate': quote.converted.exchangeRate.value,
+              '@currency': quote.converted.currency
+            })}</p>
+          </div>
+        `;
+        $dccOptions.html(html).show();
+      }
     }
-  }
 
-  /**
-   * Update submit button state based on form validity.
-   */
-  function updateSubmitButtonState($element, valid) {
-    var $button = $element.find('.webform-securepay-button');
-    
-    if (valid) {
-      $button.prop('disabled', false);
-      $button.removeClass('invalid');
-    } else {
-      $button.prop('disabled', true);
-      $button.addClass('invalid');
+    displaySuccess(response) {
+      const $results = this.$element.find('.webform-securepay-result');
+      $results.removeClass('error').addClass('success');
+      $results.html(`
+        <div class="transaction-id"><strong>${Drupal.t('Transaction ID')}:</strong> ${response.transaction_id}</div>
+        <div class="status"><strong>${Drupal.t('Status')}:</strong> ${response.status}</div>
+        <div class="amount"><strong>${Drupal.t('Amount')}:</strong> ${this.formatAmount(response.amount, response.currency)}</div>
+      `);
+      $results.show();
+      this.hideLoadingIndicator();
     }
-  }
 
-  /**
-   * Display DCC options to user.
-   */
-  function displayDCCOptions($element, quote) {
-    var $dccOptions = $element.find('.dcc-options');
-    
-    if ($dccOptions.length && quote.converted) {
-      var html = '<div class="dcc-option">' +
-        '<h4>' + Drupal.t('Currency Options') + '</h4>' +
-        '<p>' + Drupal.t('You can pay in your card currency:') + '</p>' +
-        '<p><strong>' + quote.converted.currency + ' ' + formatAmount(quote.converted.amount, quote.converted.currency) + '</strong></p>' +
-        '<p>' + Drupal.t('Exchange rate: 1 AUD = @rate @currency', {
-          '@rate': quote.converted.exchangeRate.value,
-          '@currency': quote.converted.currency
-        }) + '</p>' +
-        '<p>' + Drupal.t('Including @markup% margin', {
-          '@markup': quote.converted.exchangeRate.markup
-        }) + '</p>' +
-        '</div>';
+    displayError(message) {
+      const $results = this.$element.find('.webform-securepay-result');
+      $results.removeClass('success').addClass('error');
+      $results.html(`<div class="error-message">${message}</div>`);
+      $results.show();
+      this.hideLoadingIndicator();
+    }
+
+    displayTokenisationErrors(errors) {
+      let errorMessages = [];
       
-      $dccOptions.html(html).show();
-    }
-  }
-
-  /**
-   * Enable tokenization (used after DCC quote success).
-   */
-  function enableTokenization($element) {
-    var $button = $element.find('.webform-securepay-button');
-    $button.prop('disabled', false);
-    $button.text(Drupal.t('Complete Payment'));
-  }
-
-  /**
-   * Reset payment button to initial state.
-   */
-  function resetPaymentButton($element) {
-    var $button = $element.find('.webform-securepay-button');
-    
-    $button.prop('disabled', false);
-    $button.val(Drupal.t('Process Payment'));
-    $button.removeClass('processing invalid');
-    
-    hideLoadingIndicator($element);
-  }
-
-  /**
-   * Clear results display.
-   */
-  function clearResults($element) {
-    var $results = $element.find('.webform-securepay-result');
-    $results.hide().removeClass('success error').empty();
-  }
-
-  /**
-   * Show loading indicator.
-   */
-  function showLoadingIndicator($element) {
-    var $loading = $element.find('.loading-indicator');
-    if (!$loading.length) {
-      $loading = $('<div class="loading-indicator">' + Drupal.t('Processing...') + '</div>');
-      $element.append($loading);
-    }
-    $loading.show();
-  }
-
-  /**
-   * Hide loading indicator.
-   */
-  function hideLoadingIndicator($element) {
-    var $loading = $element.find('.loading-indicator');
-    $loading.hide();
-  }
-
-  /**
-   * Enable component after successful load.
-   */
-  function enableComponent($element) {
-    $element.removeClass('loading').addClass('ready');
-  }
-
-  /**
-   * Focus on first field if auto-focus is enabled.
-   */
-  function focusFirstField($element) {
-    // The actual focus will be handled by the SecurePay iframe
-    // This is just a placeholder for any additional logic
-  }
-
-  /**
-   * Set up 3DS2 integration.
-   */
-  function setup3DS2($element, settings) {
-    if (!settings.threeDSOrderToken) {
-      console.log('SecurePay: 3DS2 enabled but no order token provided');
-      return;
+      if (Array.isArray(errors)) {
+        errors.forEach(error => {
+          errorMessages.push(error.detail || error.message || 'Unknown error');
+        });
+      } else if (errors.detail) {
+        errorMessages.push(errors.detail);
+      } else {
+        errorMessages.push('Tokenisation failed. Please check your card details.');
+      }
+      
+      this.displayError(errorMessages.join(', '));
     }
 
-    // Load 3DS2 script if not already loaded
-    if (!window.SecurePayThreedsUI) {
-      var script = document.createElement('script');
-      script.src = settings.threeDSSdkUrl;
-      script.onload = function() {
-        initialize3DS2($element, settings);
+    // Utility Methods
+    setButtonProcessing($button, processing) {
+      if (processing) {
+        $button.prop('disabled', true).val(Drupal.t('Processing...')).addClass('processing');
+      } else {
+        $button.prop('disabled', false).val(Drupal.t('Process Payment')).removeClass('processing invalid');
+      }
+    }
+
+    clearResults() {
+      this.$element.find('.webform-securepay-result').hide().removeClass('success error').empty();
+    }
+
+    showLoadingIndicator() {
+      let $loading = this.$element.find('.loading-indicator');
+      if (!$loading.length) {
+        $loading = $(`<div class="loading-indicator">${Drupal.t('Processing...')}</div>`);
+        this.$element.append($loading);
+      }
+      $loading.show();
+    }
+
+    hideLoadingIndicator() {
+      this.$element.find('.loading-indicator').hide();
+    }
+
+    formatAmount(amount, currency = 'AUD') {
+      const formatted = (amount / 100).toFixed(2);
+      return `${currency} ${formatted}`;
+    }
+
+    setup3DS2() {
+      if (!this.settings.threeDSOrderToken) {
+        console.log('SecurePay: 3DS2 enabled but no order token provided');
+        return;
+      }
+
+      // Load 3DS2 script if not already loaded
+      if (!window.SecurePayThreedsUI) {
+        const script = document.createElement('script');
+        script.src = this.settings.threeDSSdkUrl;
+        script.onload = () => this.initialize3DS2();
+        document.head.appendChild(script);
+      } else {
+        this.initialize3DS2();
+      }
+    }
+
+    initialize3DS2() {
+      const $iframe = $('<iframe id="3ds-v2-challenge-iframe" name="3ds-v2-challenge-iframe" style="width: 500px; height: 500px; visibility: hidden;"></iframe>');
+      this.$element.append($iframe);
+
+      const sp3dsConfig = {
+        clientId: this.settings.threeDSClientId,
+        iframe: $iframe[0],
+        token: this.settings.threeDSOrderToken,
+        simpleToken: this.settings.threeDSSimpleToken,
+        threeDSSessionId: this.settings.threeDSSessionId,
+        
+        onRequestInputData: () => this.get3DS2InputData(),
+        onThreeDSResultsResponse: (result) => this.handle3DS2Result(result),
+        onThreeDSError: (errors) => this.handle3DS2Error(errors)
       };
-      document.head.appendChild(script);
-    } else {
-      initialize3DS2($element, settings);
+
+      const securePayThreedsUI = new window.SecurePayThreedsUI();
+      securePayThreedsUI.initThreeDS(sp3dsConfig);
+      this.$element.data('securePayThreedsUI', securePayThreedsUI);
     }
-  }
 
-  /**
-   * Initialize 3DS2.
-   */
-  function initialize3DS2($element, settings) {
-    // Create iframe for 3DS2 challenge
-    var $iframe = $('<iframe id="3ds-v2-challenge-iframe" name="3ds-v2-challenge-iframe" style="width: 500px; height: 500px; visibility: hidden;"></iframe>');
-    $element.append($iframe);
+    get3DS2InputData() {
+      return {
+        cardTokenInfo: {
+          cardholderName: this.settings.cardholderName || 'Test Cardholder',
+          cardToken: this.settings.cardToken
+        },
+        accountData: {
+          emailAddress: this.settings.emailAddress,
+          mobilePhone: this.settings.mobilePhone
+        },
+        billingAddress: this.settings.billingAddress,
+        shippingAddress: this.settings.shippingAddress,
+        threeDSInfo: {
+          threeDSReqAuthMethodInd: this.settings.threeDSReqAuthMethodInd || '02'
+        }
+      };
+    }
 
-    var sp3dsConfig = {
-      clientId: settings.threeDSClientId,
-      iframe: $iframe[0],
-      token: settings.threeDSOrderToken,
-      simpleToken: settings.threeDSSimpleToken,
-      threeDSSessionId: settings.threeDSSessionId,
-      
-      onRequestInputData: function() {
-        return get3DS2InputData($element, settings);
-      },
-      
-      onThreeDSResultsResponse: function(result) {
-        handle3DS2Result($element, result);
-      },
-      
-      onThreeDSError: function(errors) {
-        handle3DS2Error($element, errors);
-      }
-    };
+    handle3DS2Result(result) {
+      console.log('SecurePay: 3DS2 authentication result', result);
+      this.$element.trigger('securepay:threeDSResult', [result]);
+      this.$element.data('threeDSResult', result);
+    }
 
-    var securePayThreedsUI = new window.SecurePayThreedsUI();
-    securePayThreedsUI.initThreeDS(sp3dsConfig);
-    
-    $element.data('securePayThreedsUI', securePayThreedsUI);
-  }
-
-  /**
-   * Get 3DS2 input data.
-   */
-  function get3DS2InputData($element, settings) {
-    // Return the data required for 3DS2 authentication
-    return {
-      cardTokenInfo: {
-        cardholderName: settings.cardholderName || 'Test Cardholder',
-        cardToken: settings.cardToken
-      },
-      accountData: {
-        emailAddress: settings.emailAddress,
-        mobilePhone: settings.mobilePhone ? {
-          cc: settings.mobilePhone.cc || '+61',
-          subscriber: settings.mobilePhone.subscriber
-        } : undefined
-      },
-      billingAddress: settings.billingAddress,
-      shippingAddress: settings.shippingAddress,
-      threeDSInfo: {
-        threeDSReqAuthMethodInd: settings.threeDSReqAuthMethodInd || '02'
-      }
-    };
-  }
-
-  /**
-   * Handle 3DS2 result.
-   */
-  function handle3DS2Result($element, result) {
-    console.log('SecurePay: 3DS2 authentication result', result);
-    $element.trigger('securepay:threeDSResult', [result]);
-    
-    // Store 3DS2 result for payment processing
-    $element.data('threeDSResult', result);
-  }
-
-  /**
-   * Handle 3DS2 error.
-   */
-  function handle3DS2Error($element, errors) {
-    console.error('SecurePay: 3DS2 authentication error', errors);
-    $element.trigger('securepay:threeDSError', [errors]);
-    
-    displayError($element, '3D Secure authentication failed. Please try again.');
-  }
-
-  /**
-   * Format amount for display.
-   */
-  function formatAmount(amount, currency) {
-    currency = currency || 'AUD';
-    var formatted = (amount / 100).toFixed(2);
-    return currency + ' ' + formatted;
+    handle3DS2Error(errors) {
+      console.error('SecurePay: 3DS2 authentication error', errors);
+      this.$element.trigger('securepay:threeDSError', [errors]);
+      this.displayError('3D Secure authentication failed. Please try again.');
+    }
   }
 
 })(jQuery, Drupal, drupalSettings);

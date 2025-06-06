@@ -4,7 +4,6 @@ namespace Drupal\webform_securepay\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
-use Drupal\Core\Messenger\MessengerInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
@@ -17,89 +16,50 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
 
   use StringTranslationTrait;
 
-  // API Configuration Constants
-  public const LIVE_AUTH_URL = 'https://welcome.api2.auspost.com.au/oauth/token';
-  public const SANDBOX_AUTH_URL = 'https://welcome.api2.sandbox.auspost.com.au/oauth/token';
-  public const LIVE_API_URL = 'https://payments.auspost.net.au';
-  public const SANDBOX_API_URL = 'https://payments-stest.npe.auspost.zone';
-  public const LIVE_UI_SDK_URL = 'https://payments.auspost.net.au/v3/ui/client/securepay-ui.min.js';
-  public const SANDBOX_UI_SDK_URL = 'https://payments-stest.npe.auspost.zone/v3/ui/client/securepay-ui.min.js';
-  public const LIVE_3DS_SDK_URL = 'https://api.securepay.com.au/threeds-js/securepay-threeds.js';
-  public const SANDBOX_3DS_SDK_URL = 'https://test.api.securepay.com.au/threeds-js/securepay-threeds.js';
+  private const API_ENDPOINTS = [
+    'live' => [
+      'auth' => 'https://welcome.api2.auspost.com.au/oauth/token',
+      'api' => 'https://payments.auspost.net.au',
+      'ui_sdk' => 'https://payments.auspost.net.au/v3/ui/client/securepay-ui.min.js',
+      'threeDS_sdk' => 'https://api.securepay.com.au/threeds-js/securepay-threeds.js',
+    ],
+    'sandbox' => [
+      'auth' => 'https://welcome.api2.sandbox.auspost.com.au/oauth/token',
+      'api' => 'https://payments-stest.npe.auspost.zone',
+      'ui_sdk' => 'https://payments-stest.npe.auspost.zone/v3/ui/client/securepay-ui.min.js',
+      'threeDS_sdk' => 'https://test.api.securepay.com.au/threeds-js/securepay-threeds.js',
+    ],
+  ];
 
-  // Default Values
-  public const DEFAULT_TIMEOUT = 30;
-  public const TOKEN_BUFFER_SECONDS = 60;
-  public const AUDIENCE = 'https://api.payments.auspost.com.au';
-  public const GRANT_TYPE = 'client_credentials';
+  private const DEFAULT_TIMEOUT = 30;
+  private const TOKEN_BUFFER_SECONDS = 60;
+  private const AUDIENCE = 'https://api.payments.auspost.com.au';
+  private const GRANT_TYPE = 'client_credentials';
 
-  /**
-   * The HTTP client.
-   */
-  protected ClientInterface $httpClient;
+  private ?string $accessToken = NULL;
+  private int $tokenExpiry = 0;
 
-  /**
-   * The config factory.
-   */
-  protected ConfigFactoryInterface $configFactory;
-
-  /**
-   * The logger.
-   */
-  protected LoggerInterface $logger;
-
-  /**
-   * The messenger service.
-   */
-  protected MessengerInterface $messenger;
-
-  /**
-   * Access token cache.
-   */
-  protected ?string $accessToken = NULL;
-
-  /**
-   * Token expiry time.
-   */
-  protected int $tokenExpiry = 0;
-
-  /**
-   * Constructs a SecurePayApiService object.
-   */
   public function __construct(
-    ClientInterface $http_client,
-    ConfigFactoryInterface $config_factory,
-    LoggerChannelFactoryInterface $logger_factory,
-    MessengerInterface $messenger
-  ) {
-    $this->httpClient = $http_client;
-    $this->configFactory = $config_factory;
-    $this->logger = $logger_factory->get('webform_securepay');
-    $this->messenger = $messenger;
-  }
+    private readonly ClientInterface $httpClient,
+    private readonly ConfigFactoryInterface $configFactory,
+    private readonly LoggerInterface $logger,
+  ) {}
 
-  /**
-   * {@inheritdoc}
-   */
   public function processPayment(array $payment_data, array $element_settings = []): array {
-    $config = $this->configFactory->get('webform_securepay.settings');
-    $settings = $this->mergeSettings($element_settings, $config);
-
+    $settings = $this->mergeSettings($element_settings);
     $this->validatePaymentSettings($settings);
 
     $payment_request = $this->buildPaymentRequest($payment_data, $settings);
 
     try {
       $result = $this->makeApiRequest('POST', '/v2/payments', $payment_request);
-      $this->logTransaction($payment_request['orderId'], $result, $config);
+      $this->logTransaction($payment_request['orderId'], $result);
 
       return $this->formatPaymentResult($result, $payment_data);
     }
     catch (\Exception $e) {
-      $this->logger->error('Payment processing failed: @message', [
-        '@message' => $e->getMessage(),
-      ]);
-
+      $this->logger->error('Payment processing failed: @message', ['@message' => $e->getMessage()]);
+      
       return [
         'success' => FALSE,
         'error' => $this->t('Payment processing failed. Please try again.'),
@@ -107,13 +67,8 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
   }
 
-  /**
-   * {@inheritdoc}
-   */
-  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = NULL) {
-    $config = $this->configFactory->get('webform_securepay.settings');
-    $merchant_code = $config->get('merchant_code');
-
+  public function initiatePaymentOrder(int $amount, string $order_type = 'DYNAMIC_CURRENCY_CONVERSION', ?string $order_reference = NULL): array|false {
+    $merchant_code = $this->getConfig('merchant_code');
     if (empty($merchant_code)) {
       throw new \InvalidArgumentException('Merchant code is required');
     }
@@ -133,21 +88,14 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       return $this->makeApiRequest('POST', '/v2/payments/orders/initiate', $order_request);
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to initiate payment order: @message', [
-        '@message' => $e->getMessage(),
-      ]);
+      $this->logger->error('Failed to initiate payment order: @message', ['@message' => $e->getMessage()]);
       return FALSE;
     }
   }
 
-  /**
-   * {@inheritdoc}
-   */
-  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = NULL): bool|array {
-    $config = $this->configFactory->get('webform_securepay.settings');
-
+  public function refundPayment(string $order_id, int $amount, ?string $merchant_code = NULL): array|false {
     $refund_request = [
-      'merchantCode' => $merchant_code ?: $config->get('merchant_code'),
+      'merchantCode' => $merchant_code ?: $this->getConfig('merchant_code'),
       'amount' => $amount,
       'ip' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
     ];
@@ -156,55 +104,39 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       return $this->makeApiRequest('POST', "/v2/orders/{$order_id}/refunds", $refund_request);
     }
     catch (\Exception $e) {
-      $this->logger->error('Failed to process refund: @message', [
-        '@message' => $e->getMessage(),
-      ]);
+      $this->logger->error('Failed to process refund: @message', ['@message' => $e->getMessage()]);
       return FALSE;
     }
   }
 
-  /**
-   * {@inheritdoc}
-   */
   public function testConnection(): bool {
     try {
       $result = $this->makeApiRequest('GET', '/v2/health');
       return ($result['status'] ?? '') === 'UP';
     }
     catch (\Exception $e) {
-      $this->logger->error('Connection test failed: @message', [
-        '@message' => $e->getMessage(),
-      ]);
+      $this->logger->error('Connection test failed: @message', ['@message' => $e->getMessage()]);
       return FALSE;
     }
   }
 
-  /**
-   * {@inheritdoc}
-   */
   public function getUiSdkUrl(): string {
-    return $this->isLiveEnvironment() ? self::LIVE_UI_SDK_URL : self::SANDBOX_UI_SDK_URL;
+    $environment = $this->getConfig('environment', 'sandbox');
+    return self::API_ENDPOINTS[$environment]['ui_sdk'];
   }
 
-  /**
-   * {@inheritdoc}
-   */
   public function getThreeDS2SdkUrl(): string {
-    return $this->isLiveEnvironment() ? self::LIVE_3DS_SDK_URL : self::SANDBOX_3DS_SDK_URL;
+    $environment = $this->getConfig('environment', 'sandbox');
+    return self::API_ENDPOINTS[$environment]['threeDS_sdk'];
   }
 
-  /**
-   * Get OAuth 2.0 access token.
-   */
-  protected function getAccessToken(): string {
+  private function getAccessToken(): string {
     if ($this->accessToken && time() < $this->tokenExpiry) {
       return $this->accessToken;
     }
 
-    $config = $this->configFactory->get('webform_securepay.settings');
-    $credentials = $this->validateCredentials($config);
-
-    $auth_url = $this->isLiveEnvironment() ? self::LIVE_AUTH_URL : self::SANDBOX_AUTH_URL;
+    $credentials = $this->validateCredentials();
+    $auth_url = $this->getEndpoint('auth');
 
     try {
       $response = $this->httpClient->post($auth_url, [
@@ -234,19 +166,16 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
   }
 
-  /**
-   * Make authenticated API request.
-   */
-  protected function makeApiRequest(string $method, string $endpoint, ?array $data = NULL): array {
+  private function makeApiRequest(string $method, string $endpoint, ?array $data = NULL): array {
     $token = $this->getAccessToken();
-    $base_url = $this->getApiBaseUrl();
+    $base_url = $this->getEndpoint('api');
 
     $options = [
       'headers' => [
         'Authorization' => 'Bearer ' . $token,
         'Content-Type' => 'application/json',
       ],
-      'timeout' => $this->getTimeout(),
+      'timeout' => $this->getConfig('timeout', self::DEFAULT_TIMEOUT),
     ];
 
     if ($data) {
@@ -262,27 +191,18 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
   }
 
-  /**
-   * Validate credentials.
-   */
-  protected function validateCredentials($config): array {
-    $client_id = $config->get('client_id');
-    $client_secret = $config->get('client_secret');
+  private function validateCredentials(): array {
+    $client_id = $this->getConfig('client_id');
+    $client_secret = $this->getConfig('client_secret');
 
     if (empty($client_id) || empty($client_secret)) {
       throw new \InvalidArgumentException('Client ID and Client Secret are required');
     }
 
-    return [
-      'client_id' => $client_id,
-      'client_secret' => $client_secret,
-    ];
+    return ['client_id' => $client_id, 'client_secret' => $client_secret];
   }
 
-  /**
-   * Build payment request array.
-   */
-  protected function buildPaymentRequest(array $payment_data, array $settings): array {
+  private function buildPaymentRequest(array $payment_data, array $settings): array {
     $order_id = $this->generateOrderId($settings['order_id_prefix'] ?? 'WF_');
 
     $request = [
@@ -293,7 +213,6 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
       'orderId' => $order_id,
     ];
 
-    // Add optional parameters
     $optional_fields = ['customer_code', 'currency', 'threed_secure_details', 'dcc_details', 'fraud_check_details'];
     foreach ($optional_fields as $field) {
       if (!empty($payment_data[$field])) {
@@ -304,10 +223,7 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     return $request;
   }
 
-  /**
-   * Format payment result.
-   */
-  protected function formatPaymentResult(array $result, array $payment_data): array {
+  private function formatPaymentResult(array $result, array $payment_data): array {
     return [
       'success' => ($result['status'] ?? '') === 'paid',
       'transaction_id' => $result['orderId'] ?? '',
@@ -322,20 +238,14 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     ];
   }
 
-  /**
-   * Validate payment settings.
-   */
-  protected function validatePaymentSettings(array $settings): void {
+  private function validatePaymentSettings(array $settings): void {
     if (empty($settings['merchant_code'])) {
       throw new \InvalidArgumentException('Merchant code is required');
     }
   }
 
-  /**
-   * Log transaction if enabled.
-   */
-  protected function logTransaction(string $order_id, array $result, $config): void {
-    if ($config->get('log_transactions')) {
+  private function logTransaction(string $order_id, array $result): void {
+    if ($this->getConfig('log_transactions')) {
       $this->logger->info('SecurePay transaction: @order_id - @status', [
         '@order_id' => $order_id,
         '@status' => $result['status'] ?? 'unknown',
@@ -343,48 +253,27 @@ class SecurePayApiService implements SecurePayApiServiceInterface {
     }
   }
 
-  /**
-   * Merge element settings with global configuration.
-   */
-  protected function mergeSettings(array $element_settings, $config): array {
+  private function mergeSettings(array $element_settings): array {
     $keys = ['client_id', 'client_secret', 'merchant_code', 'environment', 'currency', 'timeout', 'order_id_prefix'];
     $settings = [];
 
     foreach ($keys as $key) {
-      $settings[$key] = $element_settings[$key] ?? $config->get($key);
+      $settings[$key] = $element_settings[$key] ?? $this->getConfig($key);
     }
 
     return $settings;
   }
 
-  /**
-   * Generate unique order ID.
-   */
-  protected function generateOrderId(string $prefix = 'WF_'): string {
+  private function generateOrderId(string $prefix = 'WF_'): string {
     return $prefix . time() . '_' . substr(uniqid(), -6);
   }
 
-  /**
-   * Get API base URL based on environment.
-   */
-  protected function getApiBaseUrl(): string {
-    return $this->isLiveEnvironment() ? self::LIVE_API_URL : self::SANDBOX_API_URL;
+  private function getEndpoint(string $type): string {
+    $environment = $this->getConfig('environment', 'sandbox');
+    return self::API_ENDPOINTS[$environment][$type];
   }
 
-  /**
-   * Check if using live environment.
-   */
-  protected function isLiveEnvironment(): bool {
-    $config = $this->configFactory->get('webform_securepay.settings');
-    return $config->get('environment') === 'live';
+  private function getConfig(string $key, $default = NULL) {
+    return $this->configFactory->get('webform_securepay.settings')->get($key) ?? $default;
   }
-
-  /**
-   * Get API timeout setting.
-   */
-  protected function getTimeout(): int {
-    $config = $this->configFactory->get('webform_securepay.settings');
-    return $config->get('timeout') ?: self::DEFAULT_TIMEOUT;
-  }
-
 }

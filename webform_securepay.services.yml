@@ -8,12 +8,36 @@ services:
     arguments: 
       - '@http_client'
       - '@config.factory'
-      - '@logger.factory'
-      - '@messenger'
+      - '@logger.channel.webform_securepay'
 
-  webform_securepay.controller:
-    class: Drupal\webform_securepay\Controller\SecurePayController
+  webform_securepay.fraud_detection:
+    class: Drupal\webform_securepay\Service\FraudDetectionService
+    arguments:
+      - '@webform_securepay.configuration'
+      - '@logger.channel.webform_securepay'
+
+  webform_securepay.notification_service:
+    class: Drupal\webform_securepay\Service\NotificationService
+    arguments:
+      - '@webform_securepay.configuration'
+      - '@plugin.manager.mail'
+      - '@current_user'
+
+  webform_securepay.payment_processor:
+    class: Drupal\webform_securepay\Service\PaymentProcessor
     arguments:
       - '@webform_securepay.api'
       - '@webform_securepay.configuration'
-      - '@logger.factory'
+      - '@webform_securepay.fraud_detection'
+      - '@webform_securepay.notification_service'
+      - '@logger.channel.webform_securepay'
+
+  webform_securepay.webhook_processor:
+    class: Drupal\webform_securepay\Service\WebhookProcessor
+    arguments:
+      - '@webform_securepay.configuration'
+      - '@logger.channel.webform_securepay'
+
+  logger.channel.webform_securepay:
+    parent: logger.channel_base
+    arguments: ['webform_securepay']

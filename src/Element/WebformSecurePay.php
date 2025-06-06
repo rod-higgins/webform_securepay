@@ -15,74 +15,29 @@ class WebformSecurePay extends FormElement {
 
   use StringTranslationTrait;
 
-  /**
-   * {@inheritdoc}
-   */
-  public function getInfo() {
+  public function getInfo(): array {
     $class = get_class($this);
     return [
       '#input' => TRUE,
-      '#process' => [
-        [$class, 'processWebformSecurePay'],
-        [$class, 'processAjaxForm'],
-      ],
-      '#element_validate' => [
-        [$class, 'validateWebformSecurePay'],
-      ],
+      '#process' => [[$class, 'processWebformSecurePay']],
+      '#element_validate' => [[$class, 'validateWebformSecurePay']],
       '#theme_wrappers' => ['container'],
-      '#attached' => [
-        'library' => ['webform_securepay/webform_securepay'],
-      ],
+      '#attached' => ['library' => ['webform_securepay/webform_securepay']],
     ];
   }
 
-  /**
-   * Processes a SecurePay element.
-   */
-  public static function processWebformSecurePay(&$element, FormStateInterface $form_state, &$complete_form) {
+  public static function processWebformSecurePay(array &$element, FormStateInterface $form_state, array &$complete_form): array {
     $element['#tree'] = TRUE;
     
-    // Get SecurePay API service
     $securepay_api = \Drupal::service('webform_securepay.api');
-    $config = \Drupal::config('webform_securepay.settings');
+    $config = \Drupal::service('webform_securepay.configuration');
     
-    // Generate unique container ID
     $container_id = 'securepay-ui-container-' . $element['#name'];
     
-    // Prepare settings for JavaScript
-    $settings = [
-      'clientId' => $element['#client_id'] ?? $config->get('client_id'),
-      'merchantCode' => $element['#merchant_code'] ?? $config->get('merchant_code'),
-      'environment' => $element['#environment'] ?? $config->get('environment', 'sandbox'),
-      'amount' => $element['#amount'] ?? '',
-      'currency' => $element['#currency'] ?? 'AUD',
-      'mode' => $element['#mode'] ?? 'checkout',
-      'allowedCardTypes' => array_values(array_filter($element['#allowed_card_types'] ?? ['visa', 'mastercard', 'amex', 'diners'])),
-      'showCardIcons' => $element['#show_card_icons'] ?? TRUE,
-      
-      // Style settings
-      'backgroundColor' => $element['#background_color'] ?? 'rgba(255, 255, 255, 0.1)',
-      'labelFontFamily' => $element['#label_font_family'] ?? 'Arial, Helvetica, sans-serif',
-      'labelFontSize' => $element['#label_font_size'] ?? '1rem',
-      'labelColor' => $element['#label_color'] ?? '#333',
-      'inputFontFamily' => $element['#input_font_family'] ?? 'Arial, Helvetica, sans-serif',
-      'inputFontSize' => $element['#input_font_size'] ?? '1rem',
-      'inputColor' => $element['#input_color'] ?? '#333',
-      
-      // Feature flags
-      'dccEnabled' => $element['#dcc_enabled'] ?? FALSE,
-      'threeDSEnabled' => $element['#three_ds_enabled'] ?? FALSE,
-      'fraudGuardEnabled' => $element['#fraud_guard_enabled'] ?? FALSE,
-      'autoFocus' => $element['#auto_focus'] ?? FALSE,
-      'binCheckEnabled' => $element['#bin_check_enabled'] ?? FALSE,
-      
-      // URLs
-      'paymentCallbackUrl' => '/webform/securepay/callback',
-    ];
-
-    // Handle DCC mode
+    $settings = self::buildElementSettings($element, $config);
+    
+    // Handle special modes
     if ($settings['mode'] === 'dcc' && $settings['dccEnabled']) {
-      // Initiate payment order for DCC
       $order_data = $securepay_api->initiatePaymentOrder(
         $settings['amount'], 
         'DYNAMIC_CURRENCY_CONVERSION',
@@ -95,9 +50,7 @@ class WebformSecurePay extends FormElement {
       }
     }
 
-    // Handle 3DS2
     if ($settings['threeDSEnabled']) {
-      // Initiate payment order for 3DS2
       $order_data = $securepay_api->initiatePaymentOrder(
         $settings['amount'], 
         'THREED_SECURE',
@@ -105,121 +58,53 @@ class WebformSecurePay extends FormElement {
       );
       
       if ($order_data && isset($order_data['threedSecureDetails'])) {
-        $settings['threeDSOrderToken'] = $order_data['orderToken'];
-        $settings['threeDSClientId'] = $order_data['threedSecureDetails']['providerClientId'];
-        $settings['threeDSSessionId'] = $order_data['threedSecureDetails']['sessionId'];
-        $settings['threeDSSimpleToken'] = $order_data['threedSecureDetails']['simpleToken'];
-        $settings['threeDSSdkUrl'] = $securepay_api->getThreeDS2SdkUrl();
+        $settings = array_merge($settings, [
+          'threeDSOrderToken' => $order_data['orderToken'],
+          'threeDSClientId' => $order_data['threedSecureDetails']['providerClientId'],
+          'threeDSSessionId' => $order_data['threedSecureDetails']['sessionId'],
+          'threeDSSimpleToken' => $order_data['threedSecureDetails']['simpleToken'],
+          'threeDSSdkUrl' => $securepay_api->getThreeDS2SdkUrl(),
+        ]);
       }
     }
 
-    // Create SecurePay UI container
-    $element['securepay_container'] = [
-      '#type' => 'markup',
-      '#markup' => '<div id="' . $container_id . '" class="securepay-ui-container"></div>',
-    ];
+    // Build form elements
+    $element = array_merge($element, self::buildFormElements($container_id, $element, $settings));
 
-    // Payment button
-    $element['payment_button'] = [
-      '#type' => 'submit',
-      '#value' => t('Process Payment'),
-      '#name' => 'securepay_' . $element['#name'],
-      '#attributes' => [
-        'class' => ['webform-securepay-button'],
-        'data-container' => $container_id,
-      ],
-      '#submit' => ['::securePaySubmit'],
-      '#ajax' => [
-        'callback' => '::securePayAjaxCallback',
-        'wrapper' => 'securepay-wrapper-' . $element['#name'],
-        'effect' => 'fade',
-      ],
-    ];
-
-    // Reset button (optional)
-    if ($element['#show_reset_button'] ?? TRUE) {
-      $element['reset_button'] = [
-        '#type' => 'button',
-        '#value' => t('Reset'),
-        '#attributes' => [
-          'class' => ['webform-securepay-reset'],
-          'data-container' => $container_id,
-        ],
-      ];
-    }
-
-    // Results container
-    $element['result'] = [
-      '#type' => 'markup',
-      '#markup' => '<div class="webform-securepay-result" style="display: none;"></div>',
-    ];
-
-    // DCC options container (for DCC mode)
-    if ($settings['mode'] === 'dcc') {
-      $element['dcc_options'] = [
-        '#type' => 'markup',
-        '#markup' => '<div class="dcc-options" style="display: none;"></div>',
-      ];
-    }
-
-    // Custom callbacks JavaScript
-    if (!empty($element['#custom_callbacks'])) {
-      $element['#attached']['html_head'][] = [
-        [
-          '#tag' => 'script',
-          '#value' => $element['#custom_callbacks'],
-        ],
-        'webform_securepay_custom_callbacks_' . $element['#name'],
-      ];
-    }
-
-    // Add wrapper
-    $element['#prefix'] = '<div id="securepay-wrapper-' . $element['#name'] . '" class="webform-securepay-element loading">';
-    $element['#suffix'] = '</div>';
-
-    // Attach SecurePay UI Script
-    $ui_sdk_url = $securepay_api->getUiSdkUrl();
+    // Attach scripts and settings
     $element['#attached']['html_head'][] = [
       [
         '#tag' => 'script',
         '#attributes' => [
           'id' => 'securepay-ui-js',
-          'src' => $ui_sdk_url,
+          'src' => $securepay_api->getUiSdkUrl(),
           'type' => 'text/javascript',
         ],
       ],
       'webform_securepay_ui_sdk',
     ];
 
-    // Attach settings to JavaScript
     $element['#attached']['drupalSettings']['webformSecurePay'] = $settings;
 
     return $element;
   }
 
-  /**
-   * Validates a SecurePay element.
-   */
-  public static function validateWebformSecurePay(&$element, FormStateInterface $form_state, &$complete_form) {
+  public static function validateWebformSecurePay(array &$element, FormStateInterface $form_state, array &$complete_form): void {
     $value = $element['#value'];
+    $config = \Drupal::service('webform_securepay.configuration');
     
-    // Basic validation
     if (!empty($value) && !is_array($value)) {
       $form_state->setError($element, t('SecurePay element must be an array.'));
       return;
     }
 
     // Validate required settings
-    $config = \Drupal::config('webform_securepay.settings');
-    $client_id = $element['#client_id'] ?? $config->get('client_id');
-    $merchant_code = $element['#merchant_code'] ?? $config->get('merchant_code');
-
-    if (empty($client_id)) {
-      $form_state->setError($element, t('SecurePay Client ID is required.'));
-    }
-
-    if (empty($merchant_code)) {
-      $form_state->setError($element, t('SecurePay Merchant Code is required.'));
+    $required_settings = ['client_id', 'merchant_code'];
+    foreach ($required_settings as $setting) {
+      $setting_value = $element['#' . $setting] ?? $config->get($setting);
+      if (empty($setting_value)) {
+        $form_state->setError($element, t('SecurePay @setting is required.', ['@setting' => ucwords(str_replace('_', ' ', $setting))]));
+      }
     }
 
     // Validate amount
@@ -239,9 +124,8 @@ class WebformSecurePay extends FormElement {
       $form_state->setError($element, t('DCC must be enabled when using DCC mode.'));
     }
 
-    // If we have payment data, validate the transaction
+    // Validate transaction if present
     if (!empty($value['token']) && !empty($value['transaction_id'])) {
-      // Transaction was processed - validate the result
       if (empty($value['status']) || $value['status'] !== 'paid') {
         $error_message = $value['error'] ?? t('Payment was not successful.');
         $form_state->setError($element, $error_message);
@@ -249,30 +133,73 @@ class WebformSecurePay extends FormElement {
     }
   }
 
-  /**
-   * Submit handler for SecurePay payment.
-   */
-  public static function securePaySubmit(array &$form, FormStateInterface $form_state) {
-    // This is handled by the AJAX callback and JavaScript
-    // The actual payment processing happens asynchronously
-  }
+  private static function buildElementSettings(array $element, $config): array {
+    $setting_keys = [
+      'client_id', 'merchant_code', 'environment', 'amount', 'currency', 'mode',
+      'allowed_card_types', 'show_card_icons', 'background_color',
+      'label_font_family', 'label_font_size', 'label_color',
+      'input_font_family', 'input_font_size', 'input_color',
+      'dcc_enabled', 'three_ds_enabled', 'fraud_guard_enabled',
+      'auto_focus', 'bin_check_enabled',
+    ];
 
-  /**
-   * AJAX callback for SecurePay payment.
-   */
-  public static function securePayAjaxCallback(array &$form, FormStateInterface $form_state) {
-    // Return the updated element
-    $triggering_element = $form_state->getTriggeringElement();
-    $element_name = str_replace('securepay_', '', $triggering_element['#name']);
+    $settings = ['paymentCallbackUrl' => '/webform/securepay/callback'];
     
-    // Find the parent element
-    $element_parents = array_slice($triggering_element['#array_parents'], 0, -1);
-    $element = $form;
-    foreach ($element_parents as $parent) {
-      $element = $element[$parent];
+    foreach ($setting_keys as $key) {
+      $settings[$key] = $element['#' . $key] ?? $config->get($key);
     }
-    
-    return $element;
+
+    // Ensure allowed_card_types is an array of values
+    $settings['allowed_card_types'] = array_values(array_filter($settings['allowed_card_types'] ?? []));
+
+    return $settings;
   }
 
+  private static function buildFormElements(string $container_id, array $element, array $settings): array {
+    $elements = [
+      'securepay_container' => [
+        '#type' => 'markup',
+        '#markup' => '<div id="' . $container_id . '" class="securepay-ui-container"></div>',
+      ],
+      'payment_button' => [
+        '#type' => 'submit',
+        '#value' => t('Process Payment'),
+        '#name' => 'securepay_' . $element['#name'],
+        '#attributes' => [
+          'class' => ['webform-securepay-button'],
+          'data-container' => $container_id,
+        ],
+      ],
+      'result' => [
+        '#type' => 'markup',
+        '#markup' => '<div class="webform-securepay-result" style="display: none;"></div>',
+      ],
+    ];
+
+    // Add reset button if configured
+    if ($element['#show_reset_button'] ?? TRUE) {
+      $elements['reset_button'] = [
+        '#type' => 'button',
+        '#value' => t('Reset'),
+        '#attributes' => [
+          'class' => ['webform-securepay-reset'],
+          'data-container' => $container_id,
+        ],
+      ];
+    }
+
+    // Add DCC options container
+    if ($settings['mode'] === 'dcc') {
+      $elements['dcc_options'] = [
+        '#type' => 'markup',
+        '#markup' => '<div class="dcc-options" style="display: none;"></div>',
+      ];
+    }
+
+    // Add wrapper
+    $elements['#prefix'] = '<div id="securepay-wrapper-' . $element['#name'] . '" class="webform-securepay-element loading">';
+    $elements['#suffix'] = '</div>';
+
+    return $elements;
+  }
 }
