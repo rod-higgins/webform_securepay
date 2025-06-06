@@ -32,7 +32,22 @@ services:
     class: Drupal\webform_securepay\Service\NotificationService
     arguments:
       - '@webform_securepay.configuration'
+      - '@plugin.manager.mail'
+      - '@current_user'
       - '@logger.channel.webform_securepay'
+
+  # Element builder service to reduce plugin complexity
+  webform_securepay.element_builder:
+    class: Drupal\webform_securepay\Service\ElementBuilderService
+    arguments:
+      - '@webform_securepay.configuration'
+      - '@webform_securepay.api'
+
+  # Form helper service
+  webform_securepay.form_helper:
+    class: Drupal\webform_securepay\Service\FormHelperService
+    arguments:
+      - '@webform_securepay.configuration'
 
   # Main processor
   webform_securepay.payment_processor:

@@ -9,53 +9,31 @@ use Drupal\webform_securepay\ValueObject\PaymentResult;
 use Psr\Log\LoggerInterface;
 
 /**
- * Handles payment notifications via email and logging.
+ * Improved notification service with proper dependency handling.
  */
 class NotificationService {
 
   use StringTranslationTrait;
 
-  /**
-   * Mail key for successful payments.
-   */
+  // Mail template keys
   private const MAIL_KEY_SUCCESS = 'payment_success';
-
-  /**
-   * Mail key for failed payments.
-   */
   private const MAIL_KEY_FAILURE = 'payment_failure';
-
-  /**
-   * Module name for mail sending.
-   */
+  private const MAIL_KEY_ALERT = 'payment_alert';
   private const MODULE_NAME = 'webform_securepay';
 
-  /**
-   * Constructs a NotificationService.
-   *
-   * @param \Drupal\webform_securepay\Service\ConfigurationService $configService
-   *   The configuration service.
-   * @param \Drupal\Core\Mail\MailManagerInterface|null $mailManager
-   *   The mail manager service (optional for simplified operation).
-   * @param \Drupal\Core\Session\AccountInterface|null $currentUser
-   *   The current user service (optional).
-   * @param \Psr\Log\LoggerInterface $logger
-   *   The logger service.
-   */
+  // Email subject limits
+  private const MAX_SUBJECT_LENGTH = 200;
+  private const MAX_BODY_LINES = 50;
+
   public function __construct(
     private readonly ConfigurationService $configService,
-    private readonly ?MailManagerInterface $mailManager,
-    private readonly ?AccountInterface $currentUser,
+    private readonly MailManagerInterface $mailManager,
+    private readonly AccountInterface $currentUser,
     private readonly LoggerInterface $logger,
   ) {}
 
   /**
-   * Sends a payment notification based on the result.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param array $context
-   *   Additional context information.
+   * Send payment notification based on result.
    */
   public function sendPaymentNotification(PaymentResult $result, array $context = []): void {
     if (!$this->isEmailNotificationsEnabled()) {
@@ -85,12 +63,7 @@ class NotificationService {
   }
 
   /**
-   * Logs a payment event for administrative tracking.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param array $context
-   *   Additional context information.
+   * Log payment event for administrative tracking.
    */
   public function logPaymentEvent(PaymentResult $result, array $context = []): void {
     $logContext = [
@@ -100,10 +73,8 @@ class NotificationService {
       'currency' => $result->currency,
     ];
 
-    // Add additional context
-    if (!empty($context)) {
-      $logContext = array_merge($logContext, $context);
-    }
+    // Merge additional context
+    $logContext = array_merge($logContext, $this->sanitizeContext($context));
 
     if ($result->success) {
       $this->logger->info('Payment processed successfully: {transaction_id} - {currency} {amount}', $logContext);
@@ -116,73 +87,48 @@ class NotificationService {
   }
 
   /**
-   * Sends a high-priority alert for critical payment issues.
-   *
-   * @param string $subject
-   *   Alert subject.
-   * @param string $message
-   *   Alert message.
-   * @param array $context
-   *   Additional context.
+   * Send high-priority alert for critical payment issues.
    */
   public function sendAlert(string $subject, string $message, array $context = []): void {
+    // Truncate subject if too long
+    $subject = $this->truncateString($subject, self::MAX_SUBJECT_LENGTH);
+    
     $this->logger->critical('Payment Alert: {subject} - {message}', [
       'subject' => $subject,
       'message' => $message,
-    ] + $context);
+    ] + $this->sanitizeContext($context));
 
-    // In a full implementation, this could send SMS, Slack notifications, etc.
     if ($this->isEmailNotificationsEnabled()) {
       $notificationEmail = $this->getNotificationEmail();
       if (!empty($notificationEmail)) {
-        // Log that an alert would be sent
-        $this->logger->info('Alert notification would be sent to: {email}', [
-          'email' => $notificationEmail,
-          'subject' => $subject,
-        ]);
+        $this->sendAlertEmail($subject, $message, $notificationEmail, $context);
       }
     }
   }
 
   /**
-   * Gets notification configuration for status checks.
-   *
-   * @return array
-   *   Notification configuration.
+   * Get notification configuration for status checks.
    */
   public function getConfiguration(): array {
     return [
       'email_notifications_enabled' => $this->isEmailNotificationsEnabled(),
       'notification_email' => $this->getNotificationEmail(),
-      'has_mail_manager' => $this->mailManager !== null,
+      'mail_system_available' => true,
     ];
   }
 
   /**
-   * Sends a success notification email.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param string $to
-   *   Recipient email address.
-   * @param array $context
-   *   Additional context.
+   * Send success notification email.
    */
   private function sendSuccessNotification(PaymentResult $result, string $to, array $context): void {
-    if (!$this->mailManager) {
-      $this->logger->info('Success notification would be sent to: {email}', [
-        'email' => $to,
-        'transaction_id' => $result->transactionId,
-      ]);
-      return;
-    }
+    $subject = $this->t('Payment Successful - Transaction @id', [
+      '@id' => $result->transactionId,
+    ]);
 
     $params = [
       'result' => $result,
       'context' => $context,
-      'subject' => $this->t('Payment Successful - Transaction @id', [
-        '@id' => $result->transactionId,
-      ]),
+      'subject' => $this->truncateString((string) $subject, self::MAX_SUBJECT_LENGTH),
       'body' => $this->buildSuccessEmailBody($result, $context),
     ];
 
@@ -190,31 +136,17 @@ class NotificationService {
   }
 
   /**
-   * Sends a failure notification email.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param string $to
-   *   Recipient email address.
-   * @param array $context
-   *   Additional context.
+   * Send failure notification email.
    */
   private function sendFailureNotification(PaymentResult $result, string $to, array $context): void {
-    if (!$this->mailManager) {
-      $this->logger->info('Failure notification would be sent to: {email}', [
-        'email' => $to,
-        'transaction_id' => $result->transactionId,
-        'error' => $result->error,
-      ]);
-      return;
-    }
+    $subject = $this->t('Payment Failed - Transaction @id', [
+      '@id' => $result->transactionId ?: 'Unknown',
+    ]);
 
     $params = [
       'result' => $result,
       'context' => $context,
-      'subject' => $this->t('Payment Failed - Transaction @id', [
-        '@id' => $result->transactionId ?: 'Unknown',
-      ]),
+      'subject' => $this->truncateString((string) $subject, self::MAX_SUBJECT_LENGTH),
       'body' => $this->buildFailureEmailBody($result, $context),
     ];
 
@@ -222,94 +154,89 @@ class NotificationService {
   }
 
   /**
-   * Builds the email body for successful payments.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param array $context
-   *   Additional context.
-   *
-   * @return array
-   *   Email body as array of lines.
+   * Send alert email.
+   */
+  private function sendAlertEmail(string $subject, string $message, string $to, array $context): void {
+    $params = [
+      'subject' => '[ALERT] ' . $subject,
+      'body' => [
+        $this->t('SecurePay Payment System Alert'),
+        '',
+        $this->t('Alert: @subject', ['@subject' => $subject]),
+        $this->t('Message: @message', ['@message' => $message]),
+        '',
+        $this->t('Time: @time', ['@time' => date('Y-m-d H:i:s')]),
+      ],
+      'context' => $context,
+    ];
+
+    $this->sendMail(self::MAIL_KEY_ALERT, $to, $params);
+  }
+
+  /**
+   * Build success email body.
    */
   private function buildSuccessEmailBody(PaymentResult $result, array $context): array {
-    $body = [];
+    $body = [
+      $this->t('A payment has been successfully processed through SecurePay.'),
+      '',
+      $this->t('Transaction Details:'),
+      $this->t('- Transaction ID: @id', ['@id' => $result->transactionId]),
+      $this->t('- Amount: @currency @amount', [
+        '@currency' => $result->currency,
+        '@amount' => number_format($result->amount / 100, 2),
+      ]),
+      $this->t('- Status: @status', ['@status' => $result->status]),
+    ];
     
-    $body[] = $this->t('A payment has been successfully processed through SecurePay.');
-    $body[] = '';
-    $body[] = $this->t('Transaction Details:');
-    $body[] = $this->t('- Transaction ID: @id', ['@id' => $result->transactionId]);
-    $body[] = $this->t('- Amount: @currency @amount', [
+    $this->addOptionalFields($body, $result, $context);
+    $this->addTimestamp($body);
+    
+    return array_slice($body, 0, self::MAX_BODY_LINES);
+  }
+
+  /**
+   * Build failure email body.
+   */
+  private function buildFailureEmailBody(PaymentResult $result, array $context): array {
+    $body = [
+      $this->t('A payment attempt has failed through SecurePay.'),
+      '',
+      $this->t('Error Details:'),
+      $this->t('- Error: @error', ['@error' => $result->error ?? 'Unknown error']),
+    ];
+
+    if ($result->errorCode) {
+      $body[] = $this->t('- Error Code: @code', ['@code' => $result->errorCode]);
+    }
+
+    if ($result->transactionId) {
+      $body[] = $this->t('- Transaction ID: @id', ['@id' => $result->transactionId]);
+    }
+
+    $body[] = $this->t('- Attempted Amount: @currency @amount', [
       '@currency' => $result->currency,
       '@amount' => number_format($result->amount / 100, 2),
     ]);
-    $body[] = $this->t('- Status: @status', ['@status' => $result->status]);
+
+    $this->addOptionalFields($body, $result, $context);
+    $this->addTimestamp($body);
     
+    return array_slice($body, 0, self::MAX_BODY_LINES);
+  }
+
+  /**
+   * Add optional fields to email body.
+   */
+  private function addOptionalFields(array &$body, PaymentResult $result, array $context): void {
     if ($result->bankTransactionId) {
       $body[] = $this->t('- Bank Transaction ID: @id', ['@id' => $result->bankTransactionId]);
     }
     
     if ($result->gatewayResponseCode) {
-      $body[] = $this->t('- Gateway Response Code: @code', ['@code' => $result->gatewayResponseCode]);
+      $body[] = $this->t('- Gateway Response: @code', ['@code' => $result->gatewayResponseCode]);
     }
-    
-    // Add context information if available
-    if (!empty($context['webform_title'])) {
-      $body[] = '';
-      $body[] = $this->t('Webform: @title', ['@title' => $context['webform_title']]);
-    }
-    
-    if (!empty($context['submission_id'])) {
-      $body[] = $this->t('Submission ID: @id', ['@id' => $context['submission_id']]);
-    }
-    
-    $body[] = '';
-    $body[] = $this->t('Processed at: @time', ['@time' => date('Y-m-d H:i:s')]);
-    
-    return $body;
-  }
 
-  /**
-   * Builds the email body for failed payments.
-   *
-   * @param \Drupal\webform_securepay\ValueObject\PaymentResult $result
-   *   The payment result.
-   * @param array $context
-   *   Additional context.
-   *
-   * @return array
-   *   Email body as array of lines.
-   */
-  private function buildFailureEmailBody(PaymentResult $result, array $context): array {
-    $body = [];
-    
-    $body[] = $this->t('A payment attempt has failed through SecurePay.');
-    $body[] = '';
-    $body[] = $this->t('Error Details:');
-    $body[] = $this->t('- Error: @error', ['@error' => $result->error ?? 'Unknown error']);
-    
-    if ($result->errorCode) {
-      $body[] = $this->t('- Error Code: @code', ['@code' => $result->errorCode]);
-    }
-    
-    if ($result->transactionId) {
-      $body[] = $this->t('- Transaction ID: @id', ['@id' => $result->transactionId]);
-    }
-    
-    $body[] = $this->t('- Attempted Amount: @currency @amount', [
-      '@currency' => $result->currency,
-      '@amount' => number_format($result->amount / 100, 2),
-    ]);
-    
-    if ($result->gatewayResponseCode) {
-      $body[] = $this->t('- Gateway Response Code: @code', ['@code' => $result->gatewayResponseCode]);
-    }
-    
-    if ($result->gatewayResponseMessage) {
-      $body[] = $this->t('- Gateway Message: @message', ['@message' => $result->gatewayResponseMessage]);
-    }
-    
-    // Add context information if available
     if (!empty($context['webform_title'])) {
       $body[] = '';
       $body[] = $this->t('Webform: @title', ['@title' => $context['webform_title']]);
@@ -318,26 +245,22 @@ class NotificationService {
     if (!empty($context['ip_address'])) {
       $body[] = $this->t('IP Address: @ip', ['@ip' => $context['ip_address']]);
     }
-    
-    $body[] = '';
-    $body[] = $this->t('Failed at: @time', ['@time' => date('Y-m-d H:i:s')]);
-    
-    return $body;
   }
 
   /**
-   * Sends an email using the mail manager.
-   *
-   * @param string $key
-   *   Mail template key.
-   * @param string $to
-   *   Recipient email address.
-   * @param array $params
-   *   Mail parameters.
+   * Add timestamp to email body.
+   */
+  private function addTimestamp(array &$body): void {
+    $body[] = '';
+    $body[] = $this->t('Processed at: @time', ['@time' => date('Y-m-d H:i:s')]);
+  }
+
+  /**
+   * Send email using mail manager.
    */
   private function sendMail(string $key, string $to, array $params): void {
     try {
-      $langcode = $this->currentUser?->getPreferredLangcode() ?? 'en';
+      $langcode = $this->currentUser->getPreferredLangcode();
       
       $result = $this->mailManager->mail(
         self::MODULE_NAME,
@@ -371,22 +294,44 @@ class NotificationService {
   }
 
   /**
-   * Checks if email notifications are enabled.
-   *
-   * @return bool
-   *   TRUE if email notifications are enabled.
+   * Check if email notifications are enabled.
    */
   private function isEmailNotificationsEnabled(): bool {
-    return (bool) $this->configService->get('email_notifications', false);
+    return (bool) $this->configService->get(ConfigurationService::EMAIL_NOTIFICATIONS, false);
   }
 
   /**
-   * Gets the configured notification email address.
-   *
-   * @return string
-   *   Notification email address or empty string.
+   * Get notification email address.
    */
   private function getNotificationEmail(): string {
-    return (string) $this->configService->get('notification_email', '');
+    return (string) $this->configService->get(ConfigurationService::NOTIFICATION_EMAIL, '');
+  }
+
+  /**
+   * Sanitize context data for logging.
+   */
+  private function sanitizeContext(array $context): array {
+    // Remove sensitive data
+    $sensitiveKeys = ['password', 'token', 'secret', 'key', 'auth'];
+    
+    foreach ($sensitiveKeys as $key) {
+      if (isset($context[$key])) {
+        $context[$key] = '[REDACTED]';
+      }
+    }
+    
+    // Limit array depth and size
+    return array_slice($context, 0, 10);
+  }
+
+  /**
+   * Truncate string to specified length.
+   */
+  private function truncateString(string $string, int $maxLength): string {
+    if (strlen($string) <= $maxLength) {
+      return $string;
+    }
+    
+    return substr($string, 0, $maxLength - 3) . '...';
   }
 }
