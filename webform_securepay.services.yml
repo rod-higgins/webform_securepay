@@ -1,9 +1,10 @@
 services:
-  # Core services
+  # Core configuration service
   webform_securepay.configuration:
     class: Drupal\webform_securepay\Service\ConfigurationService
     arguments: ['@config.factory']
 
+  # SecurePay API service
   webform_securepay.api:
     class: Drupal\webform_securepay\Service\SecurePayApiService
     arguments: 
@@ -11,52 +12,15 @@ services:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
 
-  # Supporting services
-  webform_securepay.payment_validator:
-    class: Drupal\webform_securepay\Service\PaymentValidator
-
-  webform_securepay.transaction_logger:
-    class: Drupal\webform_securepay\Service\TransactionLogger
+  # Consolidated payment service (combines processor, validator, logger, notifications)
+  webform_securepay.payment_service:
+    class: Drupal\webform_securepay\Service\PaymentService
     arguments:
+      - '@webform_securepay.api'
+      - '@webform_securepay.configuration'
       - '@database'
-      - '@webform_securepay.configuration'
-      - '@logger.channel.webform_securepay'
-
-  webform_securepay.rate_limiter:
-    class: Drupal\webform_securepay\Service\RateLimiter
-    arguments:
-      - '@database'
-      - '@webform_securepay.configuration'
-
-  webform_securepay.notification_service:
-    class: Drupal\webform_securepay\Service\NotificationService
-    arguments:
-      - '@webform_securepay.configuration'
       - '@plugin.manager.mail'
       - '@current_user'
-      - '@logger.channel.webform_securepay'
-
-  # Element builder service to reduce plugin complexity
-  webform_securepay.element_builder:
-    class: Drupal\webform_securepay\Service\ElementBuilderService
-    arguments:
-      - '@webform_securepay.configuration'
-      - '@webform_securepay.api'
-
-  # Form helper service
-  webform_securepay.form_helper:
-    class: Drupal\webform_securepay\Service\FormHelperService
-    arguments:
-      - '@webform_securepay.configuration'
-
-  # Main processor
-  webform_securepay.payment_processor:
-    class: Drupal\webform_securepay\Service\PaymentProcessor
-    arguments:
-      - '@webform_securepay.api'
-      - '@webform_securepay.configuration'
-      - '@webform_securepay.transaction_logger'
-      - '@webform_securepay.payment_validator'
       - '@logger.channel.webform_securepay'
 
   # Webhook processor
@@ -66,7 +30,14 @@ services:
       - '@webform_securepay.configuration'
       - '@logger.channel.webform_securepay'
 
-  # Logger
+  # Form builder service (combines element builder and form helper)
+  webform_securepay.form_builder:
+    class: Drupal\webform_securepay\Service\FormBuilderService
+    arguments:
+      - '@webform_securepay.configuration'
+      - '@webform_securepay.api'
+
+  # Logger channel
   logger.channel.webform_securepay:
     parent: logger.channel_base
     arguments: ['webform_securepay']

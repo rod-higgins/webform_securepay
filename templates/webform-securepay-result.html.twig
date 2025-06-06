@@ -1,0 +1,92 @@
+{#
+/**
+ * @file
+ * Payment result component template.
+ *
+ * Variables:
+ * - result: Payment result data
+ */
+#}
+
+<div class="webform-securepay-result {{ result.status == 'paid' ? 'success' : 'error' }}">
+  
+  {# Result header #}
+  <div class="result-header {{ result.status == 'paid' ? 'success' : 'error' }}">
+    <span class="result-icon">{{ result.status == 'paid' ? '✅' : '❌' }}</span>
+    <span class="result-title">
+      {{ result.status == 'paid' ? 'Payment Successful'|t : 'Payment Failed'|t }}
+    </span>
+  </div>
+  
+  {# Main result details #}
+  <div class="result-details">
+    {% if result.transaction_id %}
+      <div class="result-row">
+        <span class="label">{{ 'Transaction ID:'|t }}</span>
+        <span class="value">{{ result.transaction_id }}</span>
+      </div>
+    {% endif %}
+    
+    {% if result.amount %}
+      <div class="result-row">
+        <span class="label">{{ 'Amount:'|t }}</span>
+        <span class="value">
+          {{ result.currency|default('AUD') }} {{ (result.amount / 100)|number_format(2) }}
+        </span>
+      </div>
+    {% endif %}
+    
+    <div class="result-row">
+      <span class="label">{{ 'Status:'|t }}</span>
+      <span class="value status-{{ result.status }}">{{ result.status|title }}</span>
+    </div>
+    
+    {% if result.gateway_response_code %}
+      <div class="result-row">
+        <span class="label">{{ 'Response Code:'|t }}</span>
+        <span class="value">{{ result.gateway_response_code }}</span>
+      </div>
+    {% endif %}
+    
+    {% if result.created_at %}
+      <div class="result-row">
+        <span class="label">{{ 'Processed:'|t }}</span>
+        <span class="value">{{ result.created_at|date('d/m/Y H:i:s') }}</span>
+      </div>
+    {% endif %}
+  </div>
+  
+  {# DCC receipt (if applicable) #}
+  {% if result.dcc_quote and result.dcc_quote.converted %}
+    {% include '@webform_securepay/dcc-receipt.html.twig' with {
+      dcc_quote: result.dcc_quote
+    } %}
+  {% endif %}
+  
+  {# 3DS authentication result #}
+  {% if result.three_ds_result %}
+    <div class="three-ds-result">
+      <div class="result-row">
+        <span class="label">{{ '3D Secure Status:'|t }}</span>
+        <span class="value">{{ result.three_ds_result.transStatus|title }}</span>
+      </div>
+      {% if result.three_ds_result.liabilityShiftIndicator == 'Y' %}
+        <div class="liability-shift success">
+          <span class="icon">🛡️</span>
+          <span class="text">{{ 'Liability shifted to card issuer'|t }}</span>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+  
+  {# Error details for failed payments #}
+  {% if result.status != 'paid' and result.error %}
+    <div class="error-details">
+      <div class="error-message">{{ result.error }}</div>
+      {% if result.error_code %}
+        <div class="error-code">{{ 'Error Code:'|t }} {{ result.error_code }}</div>
+      {% endif %}
+    </div>
+  {% endif %}
+  
+</div>
