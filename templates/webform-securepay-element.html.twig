@@ -8,30 +8,311 @@
  * - value: The element value.
  * - options: The element options.
  *
+ * @see template_preprocess_webform_securepay_element()
+ *
  * @ingroup themeable
  */
 #}
-<div class="webform-securepay-element">
+
+{%
+  set classes = [
+    'webform-securepay-element',
+    element.dcc_enabled ? 'dcc-enabled',
+    element.three_ds_enabled ? 'three-ds-enabled',
+    element.fraud_guard_enabled ? 'fraud-guard-enabled',
+    element.test_mode ? 'test-mode',
+    element.environment == 'sandbox' ? 'sandbox-mode' : 'live-mode',
+  ]
+%}
+
+<div{{ attributes.addClass(classes) }}>
+  
+  {# Element title with security indicator #}
   {% if element.title %}
-    <div class="webform-securepay-title">{{ element.title }}</div>
+    <div class="webform-securepay-title">
+      <span class="title-text">{{ element.title }}</span>
+      {% if element.environment == 'sandbox' %}
+        <span class="environment-badge sandbox">{{ 'Test Mode'|t }}</span>
+      {% else %}
+        <span class="environment-badge live">{{ 'Live'|t }}</span>
+      {% endif %}
+      {% if element.three_ds_enabled %}
+        <span class="feature-badge three-ds">{{ '3D Secure'|t }}</span>
+      {% endif %}
+      {% if element.fraud_guard_enabled %}
+        <span class="feature-badge fraud-guard">{{ 'Fraud Protection'|t }}</span>
+      {% endif %}
+    </div>
   {% endif %}
   
+  {# Element description #}
   {% if element.description %}
-    <div class="webform-securepay-description">{{ element.description }}</div>
+    <div class="webform-securepay-description">
+      {{ element.description }}
+    </div>
   {% endif %}
   
-  <div class="webform-securepay-payment">
-    {{ element.payment_button }}
+  {# Security notice #}
+  <div class="security-notice">
+    <span class="security-icon">🔒</span>
+    <span class="security-text">{{ 'Your payment information is secured with bank-level encryption'|t }}</span>
   </div>
   
-  {% if value.transaction_id %}
-    <div class="webform-securepay-result">
-      <div class="transaction-id">
-        <strong>Transaction ID:</strong> {{ value.transaction_id }}
-      </div>
-      <div class="status">
-        <strong>Status:</strong> {{ value.status }}
+  {# Payment amount display #}
+  {% if element.amount %}
+    <div class="payment-amount">
+      <span class="amount-label">{{ 'Amount:'|t }}</span>
+      <span class="amount-value">
+        {{ element.currency|default('AUD') }} 
+        {% if element.amount is numeric %}
+          {{ (element.amount / 100)|number_format(2) }}
+        {% else %}
+          {{ element.amount }}
+        {% endif %}
+      </span>
+    </div>
+  {% endif %}
+  
+  {# Accepted card types display #}
+  {% if element.show_card_icons and element.allowed_card_types %}
+    <div class="accepted-cards">
+      <span class="accepted-cards-label">{{ 'We accept:'|t }}</span>
+      <div class="card-types">
+        {% for card_type in element.allowed_card_types %}
+          <span class="card-icon card-{{ card_type }}" title="{{ card_type|title }}">
+            {% if card_type == 'visa' %}
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <rect width="32" height="20" rx="4" fill="#1a1f71"/>
+                <text x="16" y="14" text-anchor="middle" fill="white" font-size="8" font-weight="bold">VISA</text>
+              </svg>
+            {% elseif card_type == 'mastercard' %}
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <rect width="32" height="20" rx="4" fill="#eb001b"/>
+                <circle cx="12" cy="10" r="6" fill="#ff5f00"/>
+                <circle cx="20" cy="10" r="6" fill="#f79e1b"/>
+              </svg>
+            {% elseif card_type == 'amex' %}
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <rect width="32" height="20" rx="4" fill="#006fcf"/>
+                <text x="16" y="14" text-anchor="middle" fill="white" font-size="6" font-weight="bold">AMEX</text>
+              </svg>
+            {% elseif card_type == 'diners' %}
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <rect width="32" height="20" rx="4" fill="#0079be"/>
+                <text x="16" y="14" text-anchor="middle" fill="white" font-size="5" font-weight="bold">DINERS</text>
+              </svg>
+            {% endif %}
+          </span>
+        {% endfor %}
       </div>
     </div>
   {% endif %}
+  
+  {# DCC notice #}
+  {% if element.mode == 'dcc' %}
+    <div class="dcc-notice">
+      <span class="dcc-icon">💱</span>
+      <span class="dcc-text">{{ 'You may pay in your card currency with live exchange rates'|t }}</span>
+    </div>
+  {% endif %}
+  
+  {# Main SecurePay UI container #}
+  <div class="webform-securepay-payment">
+    {{ element.securepay_container }}
+  </div>
+  
+  {# DCC options container (shown dynamically) #}
+  {% if element.mode == 'dcc' %}
+    {{ element.dcc_options }}
+  {% endif %}
+  
+  {# Payment controls #}
+  <div class="webform-securepay-controls">
+    {{ element.payment_button }}
+    {% if element.reset_button %}
+      {{ element.reset_button }}
+    {% endif %}
+  </div>
+  
+  {# Loading indicator (hidden by default) #}
+  <div class="loading-indicator" style="display: none;">
+    <div class="spinner"></div>
+    <span class="loading-text">{{ 'Processing your payment...'|t }}</span>
+  </div>
+  
+  {# Transaction result display #}
+  {% if value.transaction_id or value.status %}
+    <div class="webform-securepay-result {{ value.status == 'paid' ? 'success' : 'error' }}">
+      
+      {% if value.status == 'paid' %}
+        <div class="result-header success">
+          <span class="result-icon">✅</span>
+          <span class="result-title">{{ 'Payment Successful'|t }}</span>
+        </div>
+      {% else %}
+        <div class="result-header error">
+          <span class="result-icon">❌</span>
+          <span class="result-title">{{ 'Payment Failed'|t }}</span>
+        </div>
+      {% endif %}
+      
+      <div class="result-details">
+        {% if value.transaction_id %}
+          <div class="result-row transaction-id">
+            <span class="label">{{ 'Transaction ID:'|t }}</span>
+            <span class="value">{{ value.transaction_id }}</span>
+          </div>
+        {% endif %}
+        
+        {% if value.amount %}
+          <div class="result-row amount">
+            <span class="label">{{ 'Amount:'|t }}</span>
+            <span class="value">
+              {{ value.currency|default('AUD') }} 
+              {{ (value.amount / 100)|number_format(2) }}
+            </span>
+          </div>
+        {% endif %}
+        
+        {% if value.status %}
+          <div class="result-row status">
+            <span class="label">{{ 'Status:'|t }}</span>
+            <span class="value status-{{ value.status }}">{{ value.status|title }}</span>
+          </div>
+        {% endif %}
+        
+        {% if value.gateway_response_code %}
+          <div class="result-row response-code">
+            <span class="label">{{ 'Response Code:'|t }}</span>
+            <span class="value">{{ value.gateway_response_code }}</span>
+          </div>
+        {% endif %}
+        
+        {% if value.gateway_response_message %}
+          <div class="result-row response-message">
+            <span class="label">{{ 'Message:'|t }}</span>
+            <span class="value">{{ value.gateway_response_message }}</span>
+          </div>
+        {% endif %}
+        
+        {% if value.created_at %}
+          <div class="result-row timestamp">
+            <span class="label">{{ 'Processed:'|t }}</span>
+            <span class="value">{{ value.created_at|date('d/m/Y H:i:s') }}</span>
+          </div>
+        {% endif %}
+      </div>
+      
+      {# DCC receipt information #}
+      {% if value.dcc_quote and value.dcc_quote.converted %}
+        <div class="dcc-receipt">
+          <h4>{{ 'Currency Conversion Receipt'|t }}</h4>
+          <div class="dcc-row">
+            <span class="label">{{ 'Original Transaction Amount:'|t }}</span>
+            <span class="value">AUD {{ (value.dcc_quote.base.amount / 100)|number_format(2) }}</span>
+          </div>
+          <div class="dcc-row">
+            <span class="label">{{ 'FX Rate 1 AUD:'|t }}</span>
+            <span class="value">{{ value.dcc_quote.converted.exchangeRate.value }} {{ value.dcc_quote.converted.currency }}</span>
+          </div>
+          <div class="dcc-row">
+            <span class="label">{{ 'Including @markup% margin'|t({'@markup': value.dcc_quote.converted.exchangeRate.markup}) }}</span>
+          </div>
+          <div class="dcc-row final-amount">
+            <span class="label">{{ 'Final Transaction Amount:'|t }}</span>
+            <span class="value">{{ value.dcc_quote.converted.currency }} {{ (value.dcc_quote.converted.amount / 100)|number_format(2) }}</span>
+          </div>
+          <div class="dcc-disclaimer">
+            {{ 'This currency conversion has been provided by @merchant. I have been offered a choice of currencies for payment including AUD and agree to pay in @currency'|t({
+              '@merchant': 'SecurePay',
+              '@currency': value.dcc_quote.converted.currency
+            }) }}
+          </div>
+        </div>
+      {% endif %}
+      
+      {# 3DS2 authentication result #}
+      {% if value.three_ds_result %}
+        <div class="three-ds-result">
+          <div class="result-row">
+            <span class="label">{{ '3D Secure Status:'|t }}</span>
+            <span class="value">{{ value.three_ds_result.transStatus|title }}</span>
+          </div>
+          {% if value.three_ds_result.liabilityShiftIndicator == 'Y' %}
+            <div class="liability-shift success">
+              <span class="icon">🛡️</span>
+              <span class="text">{{ 'Liability shifted to card issuer'|t }}</span>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+      
+      {# Error details for failed payments #}
+      {% if value.status != 'paid' and value.error %}
+        <div class="error-details">
+          <div class="error-message">{{ value.error }}</div>
+          {% if value.error_code %}
+            <div class="error-code">{{ 'Error Code:'|t }} {{ value.error_code }}</div>
+          {% endif %}
+        </div>
+      {% endif %}
+      
+    </div>
+  {% else %}
+    {# Placeholder result container for dynamic updates #}
+    {{ element.result }}
+  {% endif %}
+  
+  {# Fraud check result (if visible) #}
+  {% if value.fraud_result and element.show_fraud_result %}
+    <div class="fraud-result">
+      <div class="fraud-header">
+        <span class="fraud-icon">🛡️</span>
+        <span class="fraud-title">{{ 'Security Check:'|t }}</span>
+        <span class="fraud-status {{ value.fraud_result.result|lower }}">
+          {{ value.fraud_result.result|title }}
+        </span>
+      </div>
+      {% if value.fraud_result.score is defined %}
+        <div class="fraud-score">
+          {{ 'Risk Score:'|t }} {{ value.fraud_result.score }}/100
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+  
+  {# Footer information #}
+  <div class="webform-securepay-footer">
+    <div class="security-badges">
+      <span class="badge pci-dss">{{ 'PCI DSS Compliant'|t }}</span>
+      <span class="badge ssl-secured">{{ 'SSL Secured'|t }}</span>
+      {% if element.environment == 'sandbox' %}
+        <span class="badge test-mode">{{ 'Test Environment'|t }}</span>
+      {% endif %}
+    </div>
+    
+    <div class="powered-by">
+      <span class="powered-text">{{ 'Powered by'|t }}</span>
+      <span class="securepay-logo">SecurePay</span>
+    </div>
+  </div>
+  
 </div>
+
+{# Custom styling for this element instance #}
+{% if element.custom_css %}
+  <style>
+    {{ element.custom_css|raw }}
+  </style>
+{% endif %}
+
+{# Custom JavaScript for this element instance #}
+{% if element.custom_javascript %}
+  <script>
+    (function($) {
+      $(document).ready(function() {
+        {{ element.custom_javascript|raw }}
+      });
+    })(jQuery);
+  </script>
+{% endif %}

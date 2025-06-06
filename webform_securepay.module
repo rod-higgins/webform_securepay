@@ -7,6 +7,8 @@
 
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\webform\WebformSubmissionInterface;
 
 /**
  * Implements hook_help().
@@ -14,7 +16,46 @@ use Drupal\Core\Routing\RouteMatchInterface;
 function webform_securepay_help($route_name, RouteMatchInterface $route_match) {
   switch ($route_name) {
     case 'help.page.webform_securepay':
-      return '<p>' . t('Provides SecurePay payment integration for Drupal Webforms with global and per-form configuration options.') . '</p>';
+      $output = '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('The SecurePay module provides comprehensive payment integration for Drupal Webforms using the modern SecurePay REST API with OAuth 2.0 authentication.') . '</p>';
+      
+      $output .= '<h3>' . t('Features') . '</h3>';
+      $output .= '<ul>';
+      $output .= '<li>' . t('Modern SecurePay REST API integration with OAuth 2.0') . '</li>';
+      $output .= '<li>' . t('Complete UI Component with all SecurePay callbacks') . '</li>';
+      $output .= '<li>' . t('Dynamic Currency Conversion (DCC) support') . '</li>';
+      $output .= '<li>' . t('3D Secure 2 authentication') . '</li>';
+      $output .= '<li>' . t('FraudGuard and ACI ReD Shield fraud detection') . '</li>';
+      $output .= '<li>' . t('Apple Pay and PayPal support (future)') . '</li>';
+      $output .= '<li>' . t('Comprehensive transaction logging and reporting') . '</li>';
+      $output .= '<li>' . t('Webhook support for real-time notifications') . '</li>';
+      $output .= '<li>' . t('Customizable UI styling and behavior') . '</li>';
+      $output .= '<li>' . t('PCI DSS compliance features') . '</li>';
+      $output .= '</ul>';
+      
+      $output .= '<h3>' . t('Configuration') . '</h3>';
+      $output .= '<p>' . t('Configure the module at <a href="@url">SecurePay Settings</a>.', [
+        '@url' => \Drupal::url('webform_securepay.admin_settings'),
+      ]) . '</p>';
+      
+      $output .= '<h3>' . t('Usage') . '</h3>';
+      $output .= '<ol>';
+      $output .= '<li>' . t('Configure your SecurePay credentials in the settings') . '</li>';
+      $output .= '<li>' . t('Create or edit a webform') . '</li>';
+      $output .= '<li>' . t('Add a SecurePay element to your form') . '</li>';
+      $output .= '<li>' . t('Configure payment amount and other settings') . '</li>';
+      $output .= '<li>' . t('Test the integration using the connection test feature') . '</li>';
+      $output .= '</ol>';
+      
+      $output .= '<h3>' . t('Support') . '</h3>';
+      $output .= '<p>' . t('For technical support, visit the <a href="@url" target="_blank">SecurePay support portal</a>.', [
+        '@url' => 'https://www.securepay.com.au/support/contact-us/',
+      ]) . '</p>';
+      
+      return $output;
+      
+    case 'webform_securepay.admin_settings':
+      return '<p>' . t('Configure SecurePay payment processing settings. These settings apply globally to all SecurePay webform elements unless overridden at the element level.') . '</p>';
   }
 }
 
@@ -29,6 +70,446 @@ function webform_securepay_theme() {
         'value' => NULL,
         'options' => [],
       ],
+      'template' => 'webform-securepay-element',
+    ],
+    'webform_securepay_result' => [
+      'variables' => [
+        'transaction_id' => NULL,
+        'amount' => NULL,
+        'currency' => 'AUD',
+        'status' => NULL,
+        'gateway_response_code' => NULL,
+        'gateway_response_message' => NULL,
+        'created_at' => NULL,
+      ],
+      'template' => 'webform-securepay-result',
+    ],
+    'webform_securepay_receipt' => [
+      'variables' => [
+        'transaction' => [],
+        'merchant_info' => [],
+        'customer_info' => [],
+      ],
+      'template' => 'webform-securepay-receipt',
+    ],
+    'webform_securepay_dcc_options' => [
+      'variables' => [
+        'quote' => [],
+        'base_amount' => NULL,
+        'base_currency' => 'AUD',
+      ],
+      'template' => 'webform-securepay-dcc-options',
     ],
   ];
+}
+
+/**
+ * Implements hook_mail().
+ */
+function webform_securepay_mail($key, &$message, $params) {
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  switch ($key) {
+    case 'payment_success':
+      $message['subject'] = t('Payment Successful - Transaction @transaction_id', [
+        '@transaction_id' => $params['result']['transaction_id'] ?? 'Unknown',
+      ]);
+      
+      $message['body'][] = t('A payment has been successfully processed through SecurePay.');
+      $message['body'][] = '';
+      $message['body'][] = t('Transaction Details:');
+      $message['body'][] = t('- Transaction ID: @id', ['@id' => $params['result']['transaction_id'] ?? 'N/A']);
+      $message['body'][] = t('- Amount: @amount @currency', [
+        '@amount' => number_format(($params['result']['amount'] ?? 0) / 100, 2),
+        '@currency' => $params['result']['currency'] ?? 'AUD',
+      ]);
+      $message['body'][] = t('- Status: @status', ['@status' => $params['result']['status'] ?? 'Unknown']);
+      $message['body'][] = t('- Gateway Response: @code - @message', [
+        '@code' => $params['result']['gateway_response_code'] ?? 'N/A',
+        '@message' => $params['result']['gateway_response_message'] ?? 'N/A',
+      ]);
+      break;
+      
+    case 'payment_failed':
+      $message['subject'] = t('Payment Failed - Order @order_id', [
+        '@order_id' => $params['result']['transaction_id'] ?? 'Unknown',
+      ]);
+      
+      $message['body'][] = t('A payment attempt has failed through SecurePay.');
+      $message['body'][] = '';
+      $message['body'][] = t('Error Details:');
+      $message['body'][] = t('- Error: @error', ['@error' => $params['result']['error'] ?? 'Unknown error']);
+      $message['body'][] = t('- Order ID: @id', ['@id' => $params['result']['transaction_id'] ?? 'N/A']);
+      $message['body'][] = t('- Amount: @amount @currency', [
+        '@amount' => number_format(($params['result']['amount'] ?? 0) / 100, 2),
+        '@currency' => $params['result']['currency'] ?? 'AUD',
+      ]);
+      break;
+      
+    case 'chargeback_notification':
+      $message['subject'] = t('Chargeback Received - Transaction @transaction_id', [
+        '@transaction_id' => $params['transaction_id'] ?? 'Unknown',
+      ]);
+      
+      $message['body'][] = t('A chargeback has been received for a SecurePay transaction.');
+      $message['body'][] = '';
+      $message['body'][] = t('Please review this transaction in your SecurePay merchant portal and take appropriate action.');
+      break;
+      
+    case 'fraud_alert':
+      $message['subject'] = t('Fraud Alert - High Risk Transaction Blocked');
+      
+      $message['body'][] = t('A high-risk transaction has been blocked by fraud detection.');
+      $message['body'][] = '';
+      $message['body'][] = t('Please review the fraud detection logs for details.');
+      break;
+  }
+}
+
+/**
+ * Implements hook_webform_submission_presave().
+ */
+function webform_securepay_webform_submission_presave(WebformSubmissionInterface $webform_submission) {
+  // Store payment data in submission before saving
+  $webform = $webform_submission->getWebform();
+  $elements = $webform->getElementsInitializedAndFlattened();
+  
+  foreach ($elements as $element_key => $element) {
+    if (isset($element['#type']) && $element['#type'] === 'securepay') {
+      $payment_data = $webform_submission->getElementData($element_key);
+      
+      if (!empty($payment_data) && is_array($payment_data)) {
+        // Log the transaction association
+        _webform_securepay_log_submission_association($webform_submission, $payment_data);
+        
+        // Trigger payment success events
+        if (($payment_data['status'] ?? '') === 'paid') {
+          \Drupal::moduleHandler()->invokeAll('webform_securepay_payment_success', [
+            $webform_submission,
+            $payment_data,
+          ]);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_webform_submission_delete().
+ */
+function webform_securepay_webform_submission_delete(WebformSubmissionInterface $webform_submission) {
+  // Clean up associated transaction records if configured
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  if ($config->get('delete_transactions_with_submission')) {
+    $database = \Drupal::database();
+    
+    $database->delete('webform_securepay_transactions')
+      ->condition('submission_id', $webform_submission->id())
+      ->execute();
+  }
+}
+
+/**
+ * Implements hook_cron().
+ */
+function webform_securepay_cron() {
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  // Clean up old transaction logs based on retention policy
+  $retention_days = $config->get('data_retention_days');
+  if ($retention_days && $retention_days > 0) {
+    $cutoff = \Drupal::time()->getRequestTime() - ($retention_days * 24 * 60 * 60);
+    
+    $database = \Drupal::database();
+    
+    // Delete old transactions
+    $database->delete('webform_securepay_transactions')
+      ->condition('created', $cutoff, '<')
+      ->condition('status', ['paid', 'failed'], 'IN')
+      ->execute();
+    
+    // Delete old webhook logs
+    $database->delete('webform_securepay_webhooks')
+      ->condition('created', $cutoff, '<')
+      ->condition('processed', 1)
+      ->execute();
+  }
+  
+  // Process any pending webhook events
+  _webform_securepay_process_pending_webhooks();
+  
+  // Generate daily transaction reports if enabled
+  if ($config->get('daily_reports_enabled')) {
+    _webform_securepay_generate_daily_report();
+  }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function webform_securepay_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  // Add SecurePay-specific validation and processing to webforms
+  if (strpos($form_id, 'webform_') === 0) {
+    $form['#validate'][] = 'webform_securepay_webform_validate';
+    $form['#submit'][] = 'webform_securepay_webform_submit';
+  }
+}
+
+/**
+ * Custom validation for webforms containing SecurePay elements.
+ */
+function webform_securepay_webform_validate($form, FormStateInterface $form_state) {
+  // Additional validation for SecurePay elements
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  if ($config->get('rate_limit_enabled')) {
+    $max_attempts = $config->get('max_attempts_per_hour');
+    $ip_address = \Drupal::request()->getClientIp();
+    
+    // Check rate limiting
+    if (_webform_securepay_check_rate_limit($ip_address, $max_attempts)) {
+      $form_state->setErrorByName('', t('Too many payment attempts. Please try again later.'));
+    }
+  }
+}
+
+/**
+ * Custom submit handler for webforms containing SecurePay elements.
+ */
+function webform_securepay_webform_submit($form, FormStateInterface $form_state) {
+  // Post-submission processing for SecurePay payments
+  $webform_submission = $form_state->getFormObject()->getEntity();
+  
+  if ($webform_submission instanceof WebformSubmissionInterface) {
+    _webform_securepay_post_submission_processing($webform_submission);
+  }
+}
+
+/**
+ * Implements hook_page_attachments().
+ */
+function webform_securepay_page_attachments(array &$attachments) {
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  // Add custom CSS if configured
+  $custom_css = $config->get('custom_css');
+  if (!empty($custom_css)) {
+    $attachments['#attached']['html_head'][] = [
+      [
+        '#tag' => 'style',
+        '#value' => $custom_css,
+      ],
+      'webform_securepay_custom_css',
+    ];
+  }
+  
+  // Add custom JavaScript if configured
+  $custom_js = $config->get('custom_javascript');
+  if (!empty($custom_js)) {
+    $attachments['#attached']['html_head'][] = [
+      [
+        '#tag' => 'script',
+        '#value' => $custom_js,
+      ],
+      'webform_securepay_custom_js',
+    ];
+  }
+  
+  // Add analytics tracking if enabled
+  if ($config->get('analytics_enabled')) {
+    $ga_id = $config->get('google_analytics_id');
+    if (!empty($ga_id)) {
+      $attachments['#attached']['html_head'][] = [
+        [
+          '#tag' => 'script',
+          '#attributes' => [
+            'async' => TRUE,
+            'src' => 'https://www.googletagmanager.com/gtag/js?id=' . $ga_id,
+          ],
+        ],
+        'webform_securepay_gtag',
+      ];
+      
+      $gtag_script = "
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', '" . $ga_id . "');
+      ";
+      
+      $attachments['#attached']['html_head'][] = [
+        [
+          '#tag' => 'script',
+          '#value' => $gtag_script,
+        ],
+        'webform_securepay_gtag_config',
+      ];
+    }
+  }
+}
+
+/**
+ * Implements hook_webform_element_info_alter().
+ */
+function webform_securepay_webform_element_info_alter(array &$definitions) {
+  // Enhance the SecurePay element definition
+  if (isset($definitions['securepay'])) {
+    $definitions['securepay']['#format_items'] = TRUE;
+    $definitions['securepay']['#format_items_inline'] = FALSE;
+    $definitions['securepay']['#format_items_ol'] = FALSE;
+    $definitions['securepay']['#format_items_ul'] = FALSE;
+  }
+}
+
+/**
+ * Log submission association with transaction.
+ */
+function _webform_securepay_log_submission_association(WebformSubmissionInterface $submission, array $payment_data) {
+  if (empty($payment_data['transaction_id'])) {
+    return;
+  }
+  
+  $database = \Drupal::database();
+  
+  try {
+    $database->update('webform_securepay_transactions')
+      ->fields([
+        'submission_id' => $submission->id(),
+        'webform_id' => $submission->getWebform()->id(),
+        'updated' => \Drupal::time()->getRequestTime(),
+      ])
+      ->condition('order_id', $payment_data['transaction_id'])
+      ->execute();
+  } catch (\Exception $e) {
+    \Drupal::logger('webform_securepay')->error('Failed to log submission association: @message', [
+      '@message' => $e->getMessage(),
+    ]);
+  }
+}
+
+/**
+ * Post-submission processing.
+ */
+function _webform_securepay_post_submission_processing(WebformSubmissionInterface $submission) {
+  $config = \Drupal::config('webform_securepay.settings');
+  
+  // Send confirmation emails
+  if ($config->get('send_confirmation_emails')) {
+    _webform_securepay_send_confirmation_email($submission);
+  }
+  
+  // Trigger integrations (CRM, accounting, etc.)
+  \Drupal::moduleHandler()->invokeAll('webform_securepay_post_submission', [$submission]);
+}
+
+/**
+ * Check rate limiting for IP address.
+ */
+function _webform_securepay_check_rate_limit($ip_address, $max_attempts) {
+  $database = \Drupal::database();
+  $one_hour_ago = \Drupal::time()->getRequestTime() - 3600;
+  
+  $attempts = $database->select('webform_securepay_transactions', 't')
+    ->condition('ip_address', $ip_address)
+    ->condition('created', $one_hour_ago, '>')
+    ->countQuery()
+    ->execute()
+    ->fetchField();
+  
+  return $attempts >= $max_attempts;
+}
+
+/**
+ * Process pending webhook events.
+ */
+function _webform_securepay_process_pending_webhooks() {
+  $database = \Drupal::database();
+  
+  $pending_webhooks = $database->select('webform_securepay_webhooks', 'w')
+    ->fields('w')
+    ->condition('processed', 0)
+    ->orderBy('created', 'ASC')
+    ->range(0, 50) // Process max 50 at a time
+    ->execute()
+    ->fetchAll();
+  
+  foreach ($pending_webhooks as $webhook) {
+    try {
+      $payload = json_decode($webhook->payload, TRUE);
+      
+      // Process the webhook event
+      $controller = \Drupal::service('webform_securepay.controller');
+      $controller->processWebhookEvent($payload);
+      
+      // Mark as processed
+      $database->update('webform_securepay_webhooks')
+        ->fields(['processed' => 1])
+        ->condition('id', $webhook->id)
+        ->execute();
+        
+    } catch (\Exception $e) {
+      // Log error and continue
+      \Drupal::logger('webform_securepay')->error('Failed to process webhook @id: @message', [
+        '@id' => $webhook->id,
+        '@message' => $e->getMessage(),
+      ]);
+      
+      $database->update('webform_securepay_webhooks')
+        ->fields([
+          'error_message' => $e->getMessage(),
+        ])
+        ->condition('id', $webhook->id)
+        ->execute();
+    }
+  }
+}
+
+/**
+ * Generate daily transaction report.
+ */
+function _webform_securepay_generate_daily_report() {
+  $config = \Drupal::config('webform_securepay.settings');
+  $database = \Drupal::database();
+  
+  $yesterday = strtotime('yesterday');
+  $today = strtotime('today');
+  
+  // Get transaction statistics
+  $stats = $database->select('webform_securepay_transactions', 't')
+    ->fields('t', ['status'])
+    ->addExpression('COUNT(*)', 'count')
+    ->addExpression('SUM(amount)', 'total_amount')
+    ->condition('created', $yesterday, '>=')
+    ->condition('created', $today, '<')
+    ->groupBy('status')
+    ->execute()
+    ->fetchAllAssoc('status');
+  
+  // Send report email
+  $report_email = $config->get('report_email');
+  if (!empty($report_email)) {
+    $mailManager = \Drupal::service('plugin.manager.mail');
+    
+    $params = [
+      'stats' => $stats,
+      'date' => date('Y-m-d', $yesterday),
+    ];
+    
+    $mailManager->mail(
+      'webform_securepay',
+      'daily_report',
+      $report_email,
+      \Drupal::currentUser()->getPreferredLangcode(),
+      $params
+    );
+  }
+}
+
+/**
+ * Send confirmation email.
+ */
+function _webform_securepay_send_confirmation_email(WebformSubmissionInterface $submission) {
+  // Implementation for sending confirmation emails
+  // This would typically integrate with the webform's email handlers
 }

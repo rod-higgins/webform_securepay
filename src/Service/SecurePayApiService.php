@@ -10,7 +10,7 @@ use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 
 /**
- * Service for SecurePay API interactions.
+ * Service for SecurePay API interactions using modern REST API.
  */
 class SecurePayApiService {
 
@@ -45,6 +45,20 @@ class SecurePayApiService {
   protected $messenger;
 
   /**
+   * Access token cache.
+   *
+   * @var string
+   */
+  protected $accessToken;
+
+  /**
+   * Token expiry time.
+   *
+   * @var int
+   */
+  protected $tokenExpiry;
+
+  /**
    * Constructs a SecurePayApiService object.
    */
   public function __construct(ClientInterface $http_client, ConfigFactoryInterface $config_factory, LoggerChannelFactoryInterface $logger_factory, MessengerInterface $messenger) {
@@ -55,15 +69,101 @@ class SecurePayApiService {
   }
 
   /**
-   * Process a payment through SecurePay.
-   *
-   * @param array $payment_data
-   *   The payment data array.
-   * @param array $element_settings
-   *   The element settings.
-   *
-   * @return array
-   *   The payment result.
+   * Get OAuth 2.0 access token.
+   */
+  protected function getAccessToken() {
+    // Return cached token if still valid
+    if ($this->accessToken && time() < $this->tokenExpiry) {
+      return $this->accessToken;
+    }
+
+    $config = $this->configFactory->get('webform_securepay.settings');
+    $client_id = $config->get('client_id');
+    $client_secret = $config->get('client_secret');
+    $environment = $config->get('environment') ?: 'sandbox';
+
+    if (empty($client_id) || empty($client_secret)) {
+      throw new \Exception('Client ID and Client Secret are required for OAuth 2.0 authentication');
+    }
+
+    $auth_url = $environment === 'live' 
+      ? 'https://welcome.api2.auspost.com.au/oauth/token'
+      : 'https://welcome.api2.sandbox.auspost.com.au/oauth/token';
+
+    try {
+      $response = $this->httpClient->post($auth_url, [
+        'headers' => [
+          'Authorization' => 'Basic ' . base64_encode($client_id . ':' . $client_secret),
+          'Content-Type' => 'application/x-www-form-urlencoded',
+        ],
+        'form_params' => [
+          'grant_type' => 'client_credentials',
+          'audience' => 'https://api.payments.auspost.com.au',
+        ],
+      ]);
+
+      $data = json_decode($response->getBody()->getContents(), TRUE);
+      
+      if (isset($data['access_token'])) {
+        $this->accessToken = $data['access_token'];
+        $this->tokenExpiry = time() + ($data['expires_in'] ?? 3600) - 60; // 60 second buffer
+        return $this->accessToken;
+      }
+
+      throw new \Exception('Failed to obtain access token');
+    }
+    catch (RequestException $e) {
+      $this->logger->error('OAuth authentication failed: @message', [
+        '@message' => $e->getMessage(),
+      ]);
+      throw new \Exception('Authentication failed: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Get API base URL based on environment.
+   */
+  protected function getApiBaseUrl() {
+    $config = $this->configFactory->get('webform_securepay.settings');
+    $environment = $config->get('environment') ?: 'sandbox';
+    
+    return $environment === 'live' 
+      ? 'https://payments.auspost.net.au'
+      : 'https://payments-stest.npe.auspost.zone';
+  }
+
+  /**
+   * Make authenticated API request.
+   */
+  protected function makeApiRequest($method, $endpoint, $data = NULL) {
+    $token = $this->getAccessToken();
+    $base_url = $this->getApiBaseUrl();
+    
+    $options = [
+      'headers' => [
+        'Authorization' => 'Bearer ' . $token,
+        'Content-Type' => 'application/json',
+      ],
+    ];
+
+    if ($data) {
+      $options['json'] = $data;
+    }
+
+    try {
+      $response = $this->httpClient->request($method, $base_url . $endpoint, $options);
+      return json_decode($response->getBody()->getContents(), TRUE);
+    }
+    catch (RequestException $e) {
+      $this->logger->error('SecurePay API request failed: @message', [
+        '@message' => $e->getMessage(),
+      ]);
+      throw new \Exception('API request failed: ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Process a payment through SecurePay REST API.
    */
   public function processPayment(array $payment_data, array $element_settings = []) {
     $config = $this->configFactory->get('webform_securepay.settings');
@@ -72,8 +172,8 @@ class SecurePayApiService {
     $settings = $this->mergeSettings($element_settings, $config);
     
     // Validate required settings
-    if (empty($settings['merchant_id']) || empty($settings['password'])) {
-      $this->logger->error('SecurePay merchant credentials not configured');
+    if (empty($settings['merchant_code'])) {
+      $this->logger->error('SecurePay merchant code not configured');
       return [
         'success' => FALSE,
         'error' => $this->t('Payment configuration error'),
@@ -83,21 +183,40 @@ class SecurePayApiService {
     // Generate unique order ID
     $order_id = $this->generateOrderId($settings['order_id_prefix'] ?? 'WF_');
     
-    // Build XML request
-    $xml_request = $this->buildXmlRequest($payment_data, $settings, $order_id);
-    
-    try {
-      $response = $this->httpClient->post($settings['api_url'], [
-        'body' => $xml_request,
-        'headers' => [
-          'Content-Type' => 'text/xml',
-          'SOAPAction' => '',
-        ],
-        'timeout' => $settings['timeout'] ?? 30,
-      ]);
+    $payment_request = [
+      'merchantCode' => $settings['merchant_code'],
+      'amount' => $payment_data['amount'],
+      'token' => $payment_data['token'],
+      'ip' => $payment_data['ip'] ?? $_SERVER['REMOTE_ADDR'],
+      'orderId' => $order_id,
+    ];
 
-      $response_body = $response->getBody()->getContents();
-      $result = $this->parseXmlResponse($response_body);
+    // Add optional parameters
+    if (!empty($payment_data['customer_code'])) {
+      $payment_request['customerCode'] = $payment_data['customer_code'];
+    }
+
+    if (!empty($payment_data['currency'])) {
+      $payment_request['currency'] = $payment_data['currency'];
+    }
+
+    // Add 3DS2 details if present
+    if (!empty($payment_data['threed_secure_details'])) {
+      $payment_request['threedSecureDetails'] = $payment_data['threed_secure_details'];
+    }
+
+    // Add DCC details if present
+    if (!empty($payment_data['dcc_details'])) {
+      $payment_request['dccDetails'] = $payment_data['dcc_details'];
+    }
+
+    // Add fraud check details if present
+    if (!empty($payment_data['fraud_check_details'])) {
+      $payment_request['fraudCheckDetails'] = $payment_data['fraud_check_details'];
+    }
+
+    try {
+      $result = $this->makeApiRequest('POST', '/v2/payments', $payment_request);
       
       // Log transaction if enabled
       if ($config->get('log_transactions')) {
@@ -107,10 +226,21 @@ class SecurePayApiService {
         ]);
       }
       
-      return $result;
+      return [
+        'success' => ($result['status'] ?? '') === 'paid',
+        'transaction_id' => $result['orderId'] ?? $order_id,
+        'bank_transaction_id' => $result['bankTransactionId'] ?? '',
+        'status' => $result['status'] ?? 'unknown',
+        'amount' => $result['amount'] ?? $payment_data['amount'],
+        'currency' => $result['currency'] ?? 'AUD',
+        'gateway_response_code' => $result['gatewayResponseCode'] ?? '',
+        'gateway_response_message' => $result['gatewayResponseMessage'] ?? '',
+        'created_at' => $result['createdAt'] ?? '',
+        'raw_response' => $result,
+      ];
       
-    } catch (RequestException $e) {
-      $this->logger->error('SecurePay API request failed: @message', [
+    } catch (\Exception $e) {
+      $this->logger->error('SecurePay payment processing failed: @message', [
         '@message' => $e->getMessage(),
       ]);
       
@@ -122,96 +252,71 @@ class SecurePayApiService {
   }
 
   /**
-   * Build XML request for SecurePay API.
+   * Initiate a payment order for DCC or 3DS2.
    */
-  protected function buildXmlRequest(array $payment_data, array $settings, $order_id) {
-    $amount = $payment_data['amount'];
-    $currency = $settings['currency'] ?? 'AUD';
-    
-    $xml = '<?xml version="1.0" encoding="UTF-8"?>';
-    $xml .= '<SecurePayMessage>';
-    $xml .= '<MessageInfo>';
-    $xml .= '<messageID>' . uniqid() . '</messageID>';
-    $xml .= '<messageTimestamp>' . date('YmdHis000000+600') . '</messageTimestamp>';
-    $xml .= '<timeoutValue>60</timeoutValue>';
-    $xml .= '<apiVersion>xml-4.2</apiVersion>';
-    $xml .= '</MessageInfo>';
-    
-    $xml .= '<MerchantInfo>';
-    $xml .= '<merchantID>' . htmlspecialchars($settings['merchant_id']) . '</merchantID>';
-    $xml .= '<password>' . htmlspecialchars($settings['password']) . '</password>';
-    $xml .= '</MerchantInfo>';
-    
-    $xml .= '<RequestType>Payment</RequestType>';
-    $xml .= '<Payment>';
-    $xml .= '<TxnList count="1">';
-    $xml .= '<Txn ID="1">';
-    $xml .= '<txnType>0</txnType>'; // Standard payment
-    $xml .= '<txnSource>23</txnSource>'; // Internet
-    $xml .= '<amount>' . $amount . '</amount>';
-    $xml .= '<currency>' . $currency . '</currency>';
-    $xml .= '<purchaseOrderNo>' . htmlspecialchars($order_id) . '</purchaseOrderNo>';
-    
-    // Credit card details (if provided)
-    if (!empty($payment_data['card_number'])) {
-      $xml .= '<CreditCardInfo>';
-      $xml .= '<cardNumber>' . htmlspecialchars($payment_data['card_number']) . '</cardNumber>';
-      $xml .= '<expiryDate>' . htmlspecialchars($payment_data['expiry_date']) . '</expiryDate>';
-      if (!empty($payment_data['cvv'])) {
-        $xml .= '<cvv>' . htmlspecialchars($payment_data['cvv']) . '</cvv>';
-      }
-      $xml .= '</CreditCardInfo>';
+  public function initiatePaymentOrder($amount, $order_type = 'DYNAMIC_CURRENCY_CONVERSION', $order_reference = NULL) {
+    $config = $this->configFactory->get('webform_securepay.settings');
+    $merchant_code = $config->get('merchant_code');
+
+    $order_request = [
+      'merchantCode' => $merchant_code,
+      'amount' => $amount,
+      'ip' => $_SERVER['REMOTE_ADDR'],
+      'orderType' => $order_type,
+    ];
+
+    if ($order_reference) {
+      $order_request['orderReference'] = $order_reference;
     }
-    
-    $xml .= '</Txn>';
-    $xml .= '</TxnList>';
-    $xml .= '</Payment>';
-    $xml .= '</SecurePayMessage>';
-    
-    return $xml;
+
+    try {
+      return $this->makeApiRequest('POST', '/v2/payments/orders/initiate', $order_request);
+    } catch (\Exception $e) {
+      $this->logger->error('Failed to initiate payment order: @message', [
+        '@message' => $e->getMessage(),
+      ]);
+      return FALSE;
+    }
   }
 
   /**
-   * Parse XML response from SecurePay.
+   * Refund a payment.
    */
-  protected function parseXmlResponse($xml_response) {
+  public function refundPayment($order_id, $amount, $merchant_code = NULL) {
+    $config = $this->configFactory->get('webform_securepay.settings');
+    
+    if (!$merchant_code) {
+      $merchant_code = $config->get('merchant_code');
+    }
+
+    $refund_request = [
+      'merchantCode' => $merchant_code,
+      'amount' => $amount,
+      'ip' => $_SERVER['REMOTE_ADDR'],
+    ];
+
     try {
-      $xml = simplexml_load_string($xml_response);
-      
-      if ($xml === FALSE) {
-        throw new \Exception('Invalid XML response');
-      }
-      
-      $status = (string) $xml->Status->statusCode;
-      $description = (string) $xml->Status->statusDescription;
-      
-      $result = [
-        'success' => $status === '000',
-        'status' => $status,
-        'description' => $description,
-        'raw_response' => $xml_response,
-      ];
-      
-      // Extract transaction details if available
-      if (isset($xml->Payment->TxnList->Txn)) {
-        $txn = $xml->Payment->TxnList->Txn;
-        $result['transaction_id'] = (string) $txn->txnID;
-        $result['amount'] = (string) $txn->amount;
-        $result['order_id'] = (string) $txn->purchaseOrderNo;
-        $result['settlement_date'] = (string) $txn->settlementDate;
-      }
-      
-      return $result;
-      
+      return $this->makeApiRequest('POST', "/v2/orders/{$order_id}/refunds", $refund_request);
     } catch (\Exception $e) {
-      $this->logger->error('Failed to parse SecurePay response: @message', [
+      $this->logger->error('Failed to process refund: @message', [
         '@message' => $e->getMessage(),
       ]);
-      
-      return [
-        'success' => FALSE,
-        'error' => $this->t('Invalid payment response'),
-      ];
+      return FALSE;
+    }
+  }
+
+  /**
+   * Test connection to SecurePay API.
+   */
+  public function testConnection() {
+    try {
+      $result = $this->makeApiRequest('GET', '/v2/health');
+      return $result['status'] === 'UP';
+    } catch (\Exception $e) {
+      $this->logger->error('Connection test failed: @message', [
+        '@message' => $e->getMessage(),
+      ]);
+      return FALSE;
     }
   }
 
@@ -229,13 +334,40 @@ class SecurePayApiService {
     $settings = [];
     
     // Get from element settings first, then fallback to global config
-    $keys = ['merchant_id', 'password', 'api_url', 'test_mode', 'currency', 'timeout', 'order_id_prefix'];
+    $keys = [
+      'client_id', 'client_secret', 'merchant_code', 'environment', 
+      'currency', 'timeout', 'order_id_prefix', 'test_mode'
+    ];
     
     foreach ($keys as $key) {
       $settings[$key] = $element_settings[$key] ?? $config->get($key);
     }
     
     return $settings;
+  }
+
+  /**
+   * Get the SecurePay UI JavaScript SDK URL.
+   */
+  public function getUiSdkUrl() {
+    $config = $this->configFactory->get('webform_securepay.settings');
+    $environment = $config->get('environment') ?: 'sandbox';
+    
+    return $environment === 'live' 
+      ? 'https://payments.auspost.net.au/v3/ui/client/securepay-ui.min.js'
+      : 'https://payments-stest.npe.auspost.zone/v3/ui/client/securepay-ui.min.js';
+  }
+
+  /**
+   * Get the 3DS2 JavaScript SDK URL.
+   */
+  public function getThreeDS2SdkUrl() {
+    $config = $this->configFactory->get('webform_securepay.settings');
+    $environment = $config->get('environment') ?: 'sandbox';
+    
+    return $environment === 'live' 
+      ? 'https://api.securepay.com.au/threeds-js/securepay-threeds.js'
+      : 'https://test.api.securepay.com.au/threeds-js/securepay-threeds.js';
   }
 
 }

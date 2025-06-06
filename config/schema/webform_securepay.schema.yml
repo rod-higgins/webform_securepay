@@ -2,24 +2,222 @@ webform_securepay.settings:
   type: config_object
   label: 'WebForm SecurePay settings'
   mapping:
+    # Authentication Settings
+    client_id:
+      type: string
+      label: 'Client ID'
+    client_secret:
+      type: string
+      label: 'Client Secret'
+    merchant_code:
+      type: string
+      label: 'Merchant Code'
+    environment:
+      type: string
+      label: 'Environment'
+    
+    # Legacy settings (for backward compatibility)
     merchant_id:
       type: string
-      label: 'Merchant ID'
+      label: 'Merchant ID (Legacy)'
     password:
       type: string
-      label: 'Password'
+      label: 'Password (Legacy)'
     api_url:
       type: uri
-      label: 'API URL'
+      label: 'API URL (Legacy)'
     test_mode:
       type: boolean
-      label: 'Test mode'
+      label: 'Test mode (Legacy)'
+    
+    # Payment Settings
     currency:
       type: string
-      label: 'Currency'
+      label: 'Default Currency'
+    default_amount:
+      type: integer
+      label: 'Default Amount (cents)'
+    order_id_prefix:
+      type: string
+      label: 'Order ID Prefix'
+    
+    # UI Settings
+    default_mode:
+      type: string
+      label: 'Default Payment Mode'
+    allowed_card_types:
+      type: sequence
+      label: 'Default Allowed Card Types'
+      sequence:
+        type: string
+    show_card_icons:
+      type: boolean
+      label: 'Show Card Icons by Default'
+    
+    # Style Settings
+    background_color:
+      type: string
+      label: 'Default Background Color'
+    label_font_family:
+      type: string
+      label: 'Default Label Font Family'
+    label_font_size:
+      type: string
+      label: 'Default Label Font Size'
+    label_color:
+      type: string
+      label: 'Default Label Color'
+    input_font_family:
+      type: string
+      label: 'Default Input Font Family'
+    input_font_size:
+      type: string
+      label: 'Default Input Font Size'
+    input_color:
+      type: string
+      label: 'Default Input Color'
+    
+    # Feature Flags
+    dcc_enabled:
+      type: boolean
+      label: 'Enable Dynamic Currency Conversion by Default'
+    three_ds_enabled:
+      type: boolean
+      label: 'Enable 3D Secure 2 by Default'
+    fraud_guard_enabled:
+      type: boolean
+      label: 'Enable FraudGuard by Default'
+    auto_focus:
+      type: boolean
+      label: 'Auto Focus by Default'
+    bin_check_enabled:
+      type: boolean
+      label: 'Enable BIN Check by Default'
+    
+    # Advanced Settings
     timeout:
       type: integer
-      label: 'API Timeout'
+      label: 'API Timeout (seconds)'
     log_transactions:
       type: boolean
       label: 'Log transactions'
+    
+    # Webhook Settings
+    webhook_enabled:
+      type: boolean
+      label: 'Enable Webhook Processing'
+    webhook_secret:
+      type: string
+      label: 'Webhook Secret'
+    
+    # 3DS2 Settings
+    three_ds_merchant_name:
+      type: string
+      label: '3DS2 Merchant Name'
+    three_ds_merchant_url:
+      type: string
+      label: '3DS2 Merchant URL'
+    
+    # Fraud Settings
+    fraud_check_type:
+      type: string
+      label: 'Default Fraud Check Type'
+    fraud_score_threshold:
+      type: integer
+      label: 'Fraud Score Threshold'
+    
+    # Apple Pay Settings (for future use)
+    apple_pay_enabled:
+      type: boolean
+      label: 'Enable Apple Pay'
+    apple_pay_merchant_id:
+      type: string
+      label: 'Apple Pay Merchant ID'
+    apple_pay_domains:
+      type: sequence
+      label: 'Apple Pay Verified Domains'
+      sequence:
+        type: string
+    
+    # PayPal Settings (for future use)
+    paypal_enabled:
+      type: boolean
+      label: 'Enable PayPal'
+    paypal_client_id:
+      type: string
+      label: 'PayPal Client ID'
+    
+    # Notification Settings
+    success_message:
+      type: string
+      label: 'Default Success Message'
+    error_message:
+      type: string
+      label: 'Default Error Message'
+    processing_message:
+      type: string
+      label: 'Default Processing Message'
+    
+    # Email Notifications
+    email_notifications:
+      type: boolean
+      label: 'Enable Email Notifications'
+    notification_email:
+      type: email
+      label: 'Notification Email Address'
+    
+    # Debugging & Development
+    debug_mode:
+      type: boolean
+      label: 'Enable Debug Mode'
+    test_card_enabled:
+      type: boolean
+      label: 'Allow Test Cards in Production'
+    
+    # Compliance & Security
+    pci_compliance_mode:
+      type: boolean
+      label: 'PCI Compliance Mode'
+    data_retention_days:
+      type: integer
+      label: 'Data Retention Period (days)'
+    
+    # Custom CSS & JavaScript
+    custom_css:
+      type: string
+      label: 'Custom CSS'
+    custom_javascript:
+      type: string
+      label: 'Custom JavaScript'
+    
+    # Multi-language Support
+    language_support:
+      type: boolean
+      label: 'Enable Multi-language Support'
+    default_language:
+      type: string
+      label: 'Default Language'
+    
+    # Analytics & Tracking
+    analytics_enabled:
+      type: boolean
+      label: 'Enable Analytics Tracking'
+    google_analytics_id:
+      type: string
+      label: 'Google Analytics ID'
+    
+    # Rate Limiting
+    rate_limit_enabled:
+      type: boolean
+      label: 'Enable Rate Limiting'
+    max_attempts_per_hour:
+      type: integer
+      label: 'Maximum Attempts per Hour'
+    
+    # Backup & Recovery
+    backup_enabled:
+      type: boolean
+      label: 'Enable Transaction Backup'
+    backup_frequency:
+      type: string
+      label: 'Backup Frequency'
