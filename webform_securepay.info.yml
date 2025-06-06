@@ -1,0 +1,9 @@
+name: 'Webform SecurePay'
+type: module
+description: 'Provides SecurePay payment integration for Drupal Webforms'
+core_version_requirement: ^10.4 || ^11
+package: Webform
+dependencies:
+  - webform:webform
+  - drupal:system
+configure: webform_securepay.admin_settings

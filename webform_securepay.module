@@ -1,0 +1,34 @@
+<?php
+
+/**
+ * @file
+ * Contains the webform_securepay module files.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Routing\RouteMatchInterface;
+
+/**
+ * Implements hook_help().
+ */
+function webform_securepay_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
+    case 'help.page.webform_securepay':
+      return '<p>' . t('Provides SecurePay payment integration for Drupal Webforms with global and per-form configuration options.') . '</p>';
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function webform_securepay_theme() {
+  return [
+    'webform_securepay_element' => [
+      'variables' => [
+        'element' => [],
+        'value' => NULL,
+        'options' => [],
+      ],
+    ],
+  ];
+}

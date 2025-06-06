@@ -1,0 +1,28 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the webform_securepay module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function webform_securepay_install() {
+  // Set default configuration values
+  $config = \Drupal::configFactory()->getEditable('webform_securepay.settings');
+  $config->set('api_url', 'https://api.securepay.com.au/xmlapi/payment');
+  $config->set('test_mode', TRUE);
+  $config->set('currency', 'AUD');
+  $config->set('timeout', 30);
+  $config->set('log_transactions', FALSE);
+  $config->save();
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function webform_securepay_uninstall() {
+  // Clean up configuration
+  \Drupal::configFactory()->getEditable('webform_securepay.settings')->delete();
+}

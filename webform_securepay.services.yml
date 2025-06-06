@@ -1,0 +1,4 @@
+services:
+  webform_securepay.api:
+    class: Drupal\webform_securepay\Service\SecurePayApiService
+    arguments: ['@http_client', '@config.factory', '@logger.factory', '@messenger']

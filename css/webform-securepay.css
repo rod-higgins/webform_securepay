@@ -1,0 +1,47 @@
+.webform-securepay-element {
+  border: 1px solid #ddd;
+  padding: 15px;
+  border-radius: 4px;
+  background: #f9f9f9;
+}
+
+.webform-securepay-title {
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.webform-securepay-description {
+  margin-bottom: 15px;
+  color: #666;
+}
+
+.webform-securepay-button {
+  background: #007cba;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.webform-securepay-button:hover {
+  background: #005a87;
+}
+
+.webform-securepay-result {
+  margin-top: 15px;
+  padding: 10px;
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 4px;
+}
+
+.webform-securepay-result.error {
+  background: #f8d7da;
+  border-color: #f5c6cb;
+}
+
+.transaction-id, .status {
+  margin-bottom: 5px;
+}

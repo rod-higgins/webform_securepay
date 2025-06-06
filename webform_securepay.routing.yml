@@ -1,0 +1,23 @@
+webform_securepay.admin_settings:
+  path: '/admin/config/webform/securepay'
+  defaults:
+    _form: '\Drupal\webform_securepay\Form\WebformSecurePaySettingsForm'
+    _title: 'WebForm SecurePay Settings'
+  requirements:
+    _permission: 'administer webform'
+
+webform_securepay.payment_callback:
+  path: '/webform/securepay/callback'
+  defaults:
+    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::paymentCallback'
+  requirements:
+    _access: 'TRUE'
+  methods: [POST]
+
+webform_securepay.test_connection:
+  path: '/admin/config/webform/securepay/test'
+  defaults:
+    _controller: '\Drupal\webform_securepay\Controller\SecurePayController::testConnection'
+    _title: 'Test SecurePay Connection'
+  requirements:
+    _permission: 'administer webform'

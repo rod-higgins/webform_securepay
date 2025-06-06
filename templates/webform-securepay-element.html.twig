@@ -1,0 +1,37 @@
+{#
+/**
+ * @file
+ * Default theme implementation for a SecurePay webform element.
+ *
+ * Available variables:
+ * - element: The element array.
+ * - value: The element value.
+ * - options: The element options.
+ *
+ * @ingroup themeable
+ */
+#}
+<div class="webform-securepay-element">
+  {% if element.title %}
+    <div class="webform-securepay-title">{{ element.title }}</div>
+  {% endif %}
+  
+  {% if element.description %}
+    <div class="webform-securepay-description">{{ element.description }}</div>
+  {% endif %}
+  
+  <div class="webform-securepay-payment">
+    {{ element.payment_button }}
+  </div>
+  
+  {% if value.transaction_id %}
+    <div class="webform-securepay-result">
+      <div class="transaction-id">
+        <strong>Transaction ID:</strong> {{ value.transaction_id }}
+      </div>
+      <div class="status">
+        <strong>Status:</strong> {{ value.status }}
+      </div>
+    </div>
+  {% endif %}
+</div>

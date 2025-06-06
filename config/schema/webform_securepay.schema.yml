@@ -1,0 +1,25 @@
+webform_securepay.settings:
+  type: config_object
+  label: 'WebForm SecurePay settings'
+  mapping:
+    merchant_id:
+      type: string
+      label: 'Merchant ID'
+    password:
+      type: string
+      label: 'Password'
+    api_url:
+      type: uri
+      label: 'API URL'
+    test_mode:
+      type: boolean
+      label: 'Test mode'
+    currency:
+      type: string
+      label: 'Currency'
+    timeout:
+      type: integer
+      label: 'API Timeout'
+    log_transactions:
+      type: boolean
+      label: 'Log transactions'
